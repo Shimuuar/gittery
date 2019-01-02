@@ -1,0 +1,33 @@
+Name:           gittery
+Version:        0.1
+Synopsis:       Tool for managing multiple repositories
+Description:
+  Its primary use 
+
+Cabal-Version:  >= 1.10
+License:        BSD3
+License-File:   LICENSE
+Author:         Aleksey Khudyakov <alexey.skladnoy@gmail.com>
+Maintainer:     Aleksey Khudyakov <alexey.skladnoy@gmail.com>
+Category:       Data
+Build-Type:     Simple
+
+Executable gittery
+  Ghc-options:      -Wall
+  Default-Language: Haskell2010
+  Build-Depends:    base                 >=4.9 && <5
+                  , aeson 
+                  , text                 >=1
+                  , unordered-containers
+                  , optparse-applicative >=0.14
+                  , hostname
+                  , yaml                 >=0.11
+                  , directory
+                  , filepath
+                  , transformers
+                  , process
+  hs-source-dirs:   exe src
+  Main-is:          Main.hs
+  Other-modules:
+                Gittery.Types
+                Gittery.Commands
