@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveFoldable      #-}
+{-# LANGUAGE DeriveFunctor       #-}
+{-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -15,12 +18,14 @@ import qualified Data.HashMap.Strict as HM
 
 ----------------------------------------------------------------
 
-data RepositoryTree = RepositoryTree
-  { treeLocation :: !(HashMap Text FilePath)
+-- | Description of tree of repositories
+data RepositoryTree a = RepositoryTree
+  { treeLocation :: !a
   , treeRepos    :: !(HashMap Text Repository)
   }
-  deriving (Show, Eq)
+  deriving (Show, Eq, Functor, Foldable, Traversable)
 
+-- | Single repository
 data Repository = Repository
   { repoType :: !RepoType
   , remote   :: !Remote
@@ -57,7 +62,7 @@ instance FromJSON Repository where
     r  <- o .: "remote"
     pure $ Repository ty r
 
-instance FromJSON RepositoryTree where
+instance FromJSON a => FromJSON (RepositoryTree a) where
   parseJSON = withObject "" $ \o -> do
     ("directory"::Text) <- o .: "type"
     loc <- o .: "location"

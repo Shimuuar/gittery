@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -23,41 +24,47 @@ import Gittery.Types
 
 
 ----------------------------------------------------------------
-data Result
-  = Error   Text
-  | RepoError Text Text
-  | RepoWarn  Text Text
-  deriving Show
 
-display :: Result -> IO ()
-display = print
+data RepoErr
+  = IOErr   !IOException        -- ^ IO exception during processing repository
+  | RepoErr !Text               -- ^ Some error
+  deriving (Show)
+
+-- display :: Result -> IO ()
+-- display = print
+
 ----------------------------------------------------------------
 
-checkRepositories :: Text -> [RepositoryTree] -> IO ()
-checkRepositories hostname
-  = mapM_ (mapM_ display <=< execWriterT . checkRepository hostname)
+checkRepositories :: [(FilePath, RepositoryTree FilePath)] -> IO ()
+checkRepositories = mapM_ $ \(treeName, RepositoryTree{..}) -> do
+  putStrLn ("==== " ++ treeName)
+  --
+  realRepos <- HS.fromList . map T.pack <$> listDirectory treeLocation
+  let expectedRepos = HS.fromList $ HM.keys treeRepos
+  -- Missing & unexpected
+  forM_ (expectedRepos `HS.difference` realRepos) $ \nm -> do
+    putStrLn $ "Missing repo: " ++ T.unpack nm
+  forM_ (realRepos `HS.difference` expectedRepos) $ \nm -> do
+    putStrLn $ "Unexpected repo: " ++ T.unpack nm
+  -- Run checks
+  forM_ (HM.toList treeRepos) $ \(nm, repo) ->
+    when (HS.member nm realRepos) $
+      checkUncommited treeLocation nm repo >>= \case
+        []   -> return ()
+        errs -> do putStrLn ("* " ++ T.unpack nm)
+                   mapM_ print errs
 
-checkRepository :: Text -> RepositoryTree -> WriterT [Result] IO ()
-checkRepository hostname RepositoryTree{..} =
-  case hostname `HM.lookup` treeLocation of
-    Nothing   -> tell [Error ("No location for host: " <> hostname)]
-    Just path -> do
-      -- Check for unknown nodes
-      do files <- liftIO $ map T.pack <$> listDirectory path
-         tell [ RepoError nm "Unknown file/directory"
-              | nm <- toList $ HS.fromList files `HS.difference` HS.fromList (HM.keys treeRepos)
-              ]
-      -- Check repository individually
-      forM_ (HM.toList treeRepos) $ \(name,Repository{..}) ->
-        tell <=< liftIO $ descend path name $ do
-          case repoType of
-            HG  -> do out <- readProcess "hg"  ["status", "-q"]         ""
-                      return [ RepoWarn name (T.pack l) | l <- lines out]
-            GIT -> do out <- readProcess "git" ["status", "-s", "-uno"] ""
-                      return [ RepoWarn name (T.pack l) | l <- lines out]
 
-descend :: FilePath -> Text -> IO [Result] -> IO [Result]
+checkUncommited :: FilePath -> Text -> Repository -> IO [RepoErr]
+checkUncommited tree repo Repository{..} = descend tree repo $ do
+  let command = case repoType of
+        HG  -> readProcess "hg"  ["status", "-q"]
+        GIT -> readProcess "git" ["status", "-s", "-uno"]
+  r <- command ""
+  return [RepoErr $ T.pack ("Uncommited: " ++ l) | l <- lines r]
+  
+descend :: FilePath -> Text -> IO [RepoErr] -> IO [RepoErr]
 descend loc repo action
   = catch (do setCurrentDirectory $ loc </> T.unpack repo
               action)
-  $ \(e::IOException) -> return [RepoError repo (T.pack (show e))]
+  $ \e -> return [IOErr e]
