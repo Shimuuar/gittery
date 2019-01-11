@@ -1,11 +1,14 @@
 {-# LANGUAGE ApplicativeDo       #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 -- |
 module Main where
 
 import Control.Monad
+import Data.Foldable
+import Control.Monad.Trans.Reader
 import           Data.Text   (Text)
 import qualified Data.Text as T
 import qualified Data.Yaml as Yaml
@@ -59,5 +62,21 @@ parser :: Parser ([(FilePath, RepositoryTree FilePath)] -> IO ())
 parser = subparser $ mconcat
   [ command "check" $
     info (pure checkRepositories) (progDesc "Check all repositories")
+  , command "fetch" $
+    flip info (progDesc "Fetch for all repositories") $ helper <*> do
+      ctxRepoParams <- many $ asum
+        [ IgnoreRemoteName   <$> strOption ( long "ignore-remote-name"
+                                          <> help "Ignore remote by its name"
+                                           )
+        , IgnoreRemotePrefix <$> strOption (long "ignore-remote-prefix"
+                                         <> help "Ignore remote by its name"
+                                          )
+        , IgnoreRemoteInfix  <$> strOption (long "ignore-remote-infix"
+                                         <> help "Ignore remote by its name"
+                                         )
+        ]
+      ctxDryRun <- switch (  long "dry-run"
+                          <> help "Do nothing")
+      pure $ flip runReaderT Ctx{..} . fetchRepo
   ]
   

@@ -1,16 +1,20 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 -- |
 module Gittery.Commands (
-  checkRepositories
+    RepoParams(..)
+  , Ctx(..)
+  , checkRepositories
+  , fetchRepo
   ) where
 
 import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Writer
+import Control.Monad.Trans.Reader
 import           Data.Foldable
 import qualified Data.Text as T
 import           Data.Text (Text)
@@ -19,9 +23,25 @@ import qualified Data.HashSet        as HS
 import System.Directory
 import System.FilePath
 import System.Process
+import System.Exit
 
 import Gittery.Types
 
+
+----------------------------------------------------------------
+
+-- | Flags for ignoring repositories and such
+data RepoParams
+  = IgnoreRemoteName   !Text
+  | IgnoreRemotePrefix !Text
+  | IgnoreRemoteInfix  !Text
+  deriving (Show)
+
+data Ctx = Ctx
+  { ctxRepoParams :: [RepoParams]
+  , ctxDryRun     :: Bool
+  }
+  deriving (Show)
 
 ----------------------------------------------------------------
 
@@ -29,6 +49,10 @@ data RepoErr
   = IOErr   !IOException        -- ^ IO exception during processing repository
   | RepoErr !Text               -- ^ Some error
   deriving (Show)
+
+
+
+
 
 -- display :: Result -> IO ()
 -- display = print
@@ -68,3 +92,46 @@ descend loc repo action
   = catch (do setCurrentDirectory $ loc </> T.unpack repo
               action)
   $ \e -> return [IOErr e]
+
+
+----------------------------------------------------------------
+
+fetchRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
+fetchRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
+  params <- asks ctxRepoParams
+  liftIO $ putStrLn ("==== " ++ treeName)
+  --
+  forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
+    liftIO $ putStrLn ("  * " ++ T.unpack nm)
+    liftIO $ setCurrentDirectory $ treeLocation </> T.unpack nm
+    let remotes = filter (acceptRemote params)
+                $ remoteList repo
+    forM_ remotes $ \(r,_) -> case repoType of
+      HG  -> run "hg"  ["pull", T.unpack r]
+      GIT -> run "git" ["fetch", T.unpack r]
+
+
+----------------------------------------------------------------
+
+acceptRemote :: [RepoParams] -> (Text,Text) -> Bool
+acceptRemote params (remote,url)
+  = all (not . reject) params
+  where
+    reject (IgnoreRemoteName   nm)   = nm == remote
+    reject (IgnoreRemotePrefix prfx) = prfx `T.isPrefixOf` url
+    reject (IgnoreRemoteInfix  infx) = infx `T.isInfixOf`  url
+
+remoteList :: Repository -> [(Text,Text)]
+remoteList Repository{..} = case remote of
+  RemoteMany   rs -> HM.toList rs
+  RemoteSimple r  -> case repoType of
+    HG  -> [("default", r)]
+    GIT -> [("origin",  r)]
+
+run :: String -> [String] -> ReaderT Ctx IO ()
+run exe args =
+  asks ctxDryRun >>= \case
+    True  -> liftIO $ print (exe,args)
+    False -> liftIO (rawSystem exe args) >>= \case
+      ExitSuccess   -> return ()
+      ExitFailure i -> error ("ExitFailure: " ++ show i)
