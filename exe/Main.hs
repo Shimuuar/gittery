@@ -15,6 +15,7 @@ import qualified Data.Yaml as Yaml
 import qualified Data.HashMap.Strict as HM
 import Network.HostName
 
+import System.Environment
 import System.Exit
 import System.Directory
 import System.FilePath
@@ -36,6 +37,7 @@ main = do
               <> progDesc "tool for managing repositories"
               )
   --
+  unsetEnv "LANG"
   hostname     <- getHostName
   repositories <- do
     dir  <- getXdgDirectory XdgConfig "gittery"

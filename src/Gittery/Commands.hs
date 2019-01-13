@@ -15,6 +15,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Writer
 import Control.Monad.Trans.Reader
+import           Data.List
 import           Data.Foldable
 import qualified Data.Text as T
 import           Data.Text (Text)
@@ -97,7 +98,8 @@ descend loc repo action
 
 fetchRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
 fetchRepo = foreachRemote $ \ty (r,_) -> case ty of
-  HG  -> run "hg"  ["pull", T.unpack r]
+  HG  -> runStdout "hg"  ["pull", T.unpack r] $ \s ->
+    unless ("no changes found" `isInfixOf` s) (liftIO $ putStr s)
   GIT -> run "git" ["fetch", T.unpack r]
 
 
@@ -146,3 +148,9 @@ run exe args =
     False -> liftIO (rawSystem exe args) >>= \case
       ExitSuccess   -> return ()
       ExitFailure i -> error ("ExitFailure: " ++ show i)
+
+runStdout :: String -> [String] -> (String -> ReaderT Ctx IO ()) -> ReaderT Ctx IO ()
+runStdout exe args cont =
+  asks ctxDryRun >>= \case
+    True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
+    False -> cont =<< liftIO (readProcess exe args "")
