@@ -66,19 +66,29 @@ parser = subparser $ mconcat
     info (pure checkRepositories) (progDesc "Check all repositories")
   , command "fetch" $
     flip info (progDesc "Fetch for all repositories") $ helper <*> do
-      ctxRepoParams <- many $ asum
-        [ IgnoreRemoteName   <$> strOption ( long "ignore-remote-name"
-                                          <> help "Ignore remote by its name"
-                                           )
-        , IgnoreRemotePrefix <$> strOption (long "ignore-remote-prefix"
-                                         <> help "Ignore remote by its name"
-                                          )
-        , IgnoreRemoteInfix  <$> strOption (long "ignore-remote-infix"
-                                         <> help "Ignore remote by its name"
-                                         )
-        ]
-      ctxDryRun <- switch (  long "dry-run"
-                          <> help "Do nothing")
+      ctxRepoParams <- ignoreParser
+      ctxDryRun     <- switch (  long "dry-run"
+                              <> help "Do nothing")
       pure $ flip runReaderT Ctx{..} . fetchRepo
+  , command "push" $
+    flip info (progDesc "Try to push all changes to repository") $ helper <*> do
+      ctxRepoParams <- ignoreParser
+      ctxDryRun     <- switch (  long "dry-run"
+                              <> help "Do nothing")
+      pure $ flip runReaderT Ctx{..} . pushRepo
+  , command "init" $
+    flip info (progDesc "Create all missing repositories") $ helper <*> do
+      pure cloneRepo
   ]
-  
+  where
+    ignoreParser =  many $ asum
+      [ IgnoreRemoteName   <$> strOption ( long "ignore-remote-name"
+                                        <> help "Ignore remote by its name"
+                                         )
+      , IgnoreRemotePrefix <$> strOption (long "ignore-remote-prefix"
+                                       <> help "Ignore remote by its name"
+                                        )
+      , IgnoreRemoteInfix  <$> strOption (long "ignore-remote-infix"
+                                       <> help "Ignore remote by its name"
+                                       )
+      ]

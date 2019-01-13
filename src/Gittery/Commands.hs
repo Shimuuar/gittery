@@ -8,6 +8,8 @@ module Gittery.Commands (
   , Ctx(..)
   , checkRepositories
   , fetchRepo
+  , pushRepo
+  , cloneRepo
   ) where
 
 import Control.Exception
@@ -93,7 +95,7 @@ descend loc repo action
 
 
 ----------------------------------------------------------------
--- Fetching
+-- Commands
 ----------------------------------------------------------------
 
 fetchRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
@@ -102,6 +104,30 @@ fetchRepo = foreachRemote $ \ty (r,_) -> case ty of
     unless ("no changes found" `isInfixOf` s) (liftIO $ putStr s)
   GIT -> run "git" ["fetch", T.unpack r]
 
+pushRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
+pushRepo = foreachRemote $ \ty (r,_) -> case ty of
+  HG  -> run "hg"  ["push", T.unpack r]
+  GIT -> run "git" ["push", T.unpack r, "master"]
+
+cloneRepo :: [(FilePath, RepositoryTree FilePath)] -> IO ()
+cloneRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
+  putStrLn ("==== " ++ treeName)
+  --
+  forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
+    liftIO $ putStrLn ("* " ++ T.unpack nm)
+    let dir = treeLocation </> T.unpack nm
+    doesDirectoryExist dir >>= \case
+      True  -> return ()
+      False -> do
+        createDirectoryIfMissing True dir
+        setCurrentDirectory dir
+        case repoType of
+          HG  -> do run' "hg" ["init"]
+                    forM_ (remoteList repo) $ \(r,url) ->
+                      run' "crudini" ["--set", ".hg/hgrc", "paths", T.unpack r, T.unpack url]
+          GIT -> do run' "git" ["init"]
+                    forM_ (remoteList repo) $ \(r,url) ->
+                      run' "git" ["remote", "add", T.unpack r, T.unpack url]
 
 
 ----------------------------------------------------------------
@@ -140,6 +166,12 @@ remoteList Repository{..} = case remote of
   RemoteSimple r  -> case repoType of
     HG  -> [("default", r)]
     GIT -> [("origin",  r)]
+
+run' :: String -> [String] -> IO ()
+run' exe args =
+  rawSystem exe args >>= \case
+    ExitSuccess   -> return ()
+    ExitFailure i -> error ("ExitFailure: " ++ show i)
 
 run :: String -> [String] -> ReaderT Ctx IO ()
 run exe args =
