@@ -106,7 +106,16 @@ fetchRepo = foreachRemote $ \ty (r,_) -> case ty of
 
 pushRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
 pushRepo = foreachRemote $ \ty (r,_) -> case ty of
-  HG  -> run "hg"  ["push", T.unpack r]
+  -- FIXME: special case hg push (we need to treat exit code specially)
+  HG  -> do
+    let exe  = "hg"
+        args = ["push", T.unpack r]
+    asks ctxDryRun >>= \case
+      True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
+      False -> liftIO (rawSystem exe args) >>= \case
+        ExitSuccess   -> return ()
+        ExitFailure 1 -> return ()
+        ExitFailure i -> error ("ExitFailure: " ++ show i)
   GIT -> run "git" ["push", T.unpack r, "master"]
 
 cloneRepo :: [(FilePath, RepositoryTree FilePath)] -> IO ()
