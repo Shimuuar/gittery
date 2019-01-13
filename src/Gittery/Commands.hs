@@ -83,7 +83,7 @@ checkUncommited tree repo Repository{..} = descend tree repo $ do
         GIT -> readProcess "git" ["status", "-s", "-uno"]
   r <- command ""
   return [RepoErr $ T.pack ("Uncommited: " ++ l) | l <- lines r]
-  
+
 descend :: FilePath -> Text -> IO [RepoErr] -> IO [RepoErr]
 descend loc repo action
   = catch (do setCurrentDirectory $ loc </> T.unpack repo
@@ -96,24 +96,33 @@ descend loc repo action
 ----------------------------------------------------------------
 
 fetchRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
-fetchRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
-  params <- asks ctxRepoParams
-  liftIO $ putStrLn ("==== " ++ treeName)
-  --
-  forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
-    liftIO $ putStrLn ("* " ++ T.unpack nm)
-    liftIO $ setCurrentDirectory $ treeLocation </> T.unpack nm
-    let remotes = filter (acceptRemote params)
-                $ remoteList repo
-    forM_ remotes $ \(r,_) -> case repoType of
-      HG  -> run "hg"  ["pull", T.unpack r]
-      GIT -> run "git" ["fetch", T.unpack r]
+fetchRepo = foreachRemote $ \ty (r,_) -> case ty of
+  HG  -> run "hg"  ["pull", T.unpack r]
+  GIT -> run "git" ["fetch", T.unpack r]
 
 
 
 ----------------------------------------------------------------
 -- Utils
 ----------------------------------------------------------------
+
+foreachRemote
+  :: (RepoType -> (Text,Text) -> ReaderT Ctx IO ())
+     -- ^ Action for each remote
+  -> [(FilePath, RepositoryTree FilePath)]
+     -- ^ List of repositories
+  -> ReaderT Ctx IO ()
+foreachRemote action = mapM_ $ \(treeName, RepositoryTree{..}) -> do
+  params <- asks ctxRepoParams
+  liftIO $ putStrLn ("==== " ++ treeName)
+  --
+  forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
+    liftIO $ putStrLn ("* " ++ T.unpack nm)
+    liftIO $ setCurrentDirectory $ treeLocation </> T.unpack nm
+    mapM_ (action repoType)
+      $ filter (acceptRemote params)
+      $ remoteList repo
+
 
 acceptRemote :: [RepoParams] -> (Text,Text) -> Bool
 acceptRemote params (remote,url)
