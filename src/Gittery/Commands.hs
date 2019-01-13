@@ -52,11 +52,8 @@ data RepoErr
 
 
 
-
-
--- display :: Result -> IO ()
--- display = print
-
+----------------------------------------------------------------
+-- Checking repositories
 ----------------------------------------------------------------
 
 checkRepositories :: [(FilePath, RepositoryTree FilePath)] -> IO ()
@@ -95,6 +92,8 @@ descend loc repo action
 
 
 ----------------------------------------------------------------
+-- Fetching
+----------------------------------------------------------------
 
 fetchRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
 fetchRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
@@ -102,7 +101,7 @@ fetchRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
   liftIO $ putStrLn ("==== " ++ treeName)
   --
   forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
-    liftIO $ putStrLn ("  * " ++ T.unpack nm)
+    liftIO $ putStrLn ("* " ++ T.unpack nm)
     liftIO $ setCurrentDirectory $ treeLocation </> T.unpack nm
     let remotes = filter (acceptRemote params)
                 $ remoteList repo
@@ -111,6 +110,9 @@ fetchRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
       GIT -> run "git" ["fetch", T.unpack r]
 
 
+
+----------------------------------------------------------------
+-- Utils
 ----------------------------------------------------------------
 
 acceptRemote :: [RepoParams] -> (Text,Text) -> Bool
@@ -131,7 +133,7 @@ remoteList Repository{..} = case remote of
 run :: String -> [String] -> ReaderT Ctx IO ()
 run exe args =
   asks ctxDryRun >>= \case
-    True  -> liftIO $ print (exe,args)
+    True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
     False -> liftIO (rawSystem exe args) >>= \case
       ExitSuccess   -> return ()
       ExitFailure i -> error ("ExitFailure: " ++ show i)
