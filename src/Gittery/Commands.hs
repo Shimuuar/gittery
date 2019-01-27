@@ -10,6 +10,7 @@ module Gittery.Commands (
   , fetchRepo
   , pushRepo
   , cloneRepo
+  , lsRepo
   ) where
 
 import Control.Exception
@@ -138,6 +139,8 @@ cloneRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
                     forM_ (remoteList repo) $ \(r,url) ->
                       run' "git" ["remote", "add", T.unpack r, T.unpack url]
 
+lsRepo :: [(FilePath, RepositoryTree FilePath)] -> IO ()
+lsRepo = mapM_ $ \(treeName, _) -> putStrLn treeName
 
 ----------------------------------------------------------------
 -- Utils

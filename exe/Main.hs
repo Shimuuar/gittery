@@ -78,6 +78,9 @@ parser = subparser $ mconcat
   , command "init" $
     flip info (progDesc "Create all missing repositories") $ helper <*> do
       pure cloneRepo
+  , command "ls" $
+    flip info (progDesc "List all repository groups") $ helper <*> do
+      pure lsRepo
   ]
   where
     ignoreParser =  many $ asum
