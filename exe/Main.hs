@@ -94,15 +94,16 @@ parser = subparser $ mconcat
       [ IgnoreRemoteName   <$> strOption ( long "ignore-remote-name"
                                         <> help "Ignore remote by its name"
                                          )
-      , IgnoreRemotePrefix <$> strOption (long "ignore-remote-prefix"
-                                       <> help "Ignore remote by its name"
+      , IgnoreRemotePrefix <$> strOption ( long "ignore-remote-prefix"
+                                        <> help "Ignore remote by its name"
+                                         )
+      , IgnoreRemoteInfix  <$> strOption ( long "ignore-remote-infix"
+                                        <> help "Ignore remote by its name"
                                         )
-      , IgnoreRemoteInfix  <$> strOption (long "ignore-remote-infix"
-                                       <> help "Ignore remote by its name"
-                                       )
       ]
     dryRunParser = switch ( long "dry-run"
-                         <> help "Do nothing")
+                         <> help "Do nothing"
+                          )
     keyParser =  many $ strArgument ( help    "Repo trees to check"
                                    <> metavar "TREE"
                                     )
