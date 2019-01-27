@@ -10,6 +10,7 @@ import Control.Monad
 import Data.Foldable
 import Control.Monad.Trans.Reader
 import qualified Data.Text as T
+import qualified Data.Set  as Set
 import qualified Data.Yaml as Yaml
 import qualified Data.HashMap.Strict as HM
 import Network.HostName
@@ -58,25 +59,37 @@ main = do
   cmd repositories
 
 
+filterArguments :: [String] -> [(FilePath, a)] -> [(FilePath, a)]
+filterArguments []   xs = xs
+filterArguments keys xs
+  | not (Set.null unknownKeys) = error $ unwords $ "Unknown repo trees:" : Set.toList unknownKeys
+  | otherwise                  = filter (\(k,_) -> k `Set.member` keySet) xs
+  where
+    keySet       = Set.fromList keys
+    existingKeys = Set.fromList $ map fst xs
+    unknownKeys  = keySet `Set.difference` existingKeys
 
 parser :: Parser ([(FilePath, RepositoryTree FilePath)] -> IO ())
 parser = subparser $ mconcat
-  [ command "check" $ wrap "Check all repositories"     $ pure checkRepositories
+  [ command "check" $ wrap "Check all repositories"     $ do
+      keys <- keyParser
+      pure (checkRepositories . filterArguments keys)
   , command "fetch" $ wrap "Fetch for all repositories" $ do
       ctxRepoParams <- ignoreParser
-      ctxDryRun     <- switch (  long "dry-run"
-                              <> help "Do nothing")
-      pure $ flip runReaderT Ctx{..} . fetchRepo
+      ctxDryRun     <- dryRunParser
+      keys          <- keyParser
+      pure $ flip runReaderT Ctx{..} . fetchRepo . filterArguments keys
   , command "push" $ wrap "Try to push all changes to repository" $ do
       ctxRepoParams <- ignoreParser
-      ctxDryRun     <- switch (  long "dry-run"
-                              <> help "Do nothing")
-      pure $ flip runReaderT Ctx{..} . pushRepo
+      ctxDryRun     <- dryRunParser
+      keys          <- keyParser
+      pure $ flip runReaderT Ctx{..} . pushRepo . filterArguments keys
   , command "init" $ wrap "Create all missing repositories" $ pure cloneRepo
   , command "ls"   $ wrap "List all repository groups"      $ pure lsRepo
    ]
   where
     wrap hlp p   = (helper <*> p) `info` progDesc hlp
+    --
     ignoreParser =  many $ asum
       [ IgnoreRemoteName   <$> strOption ( long "ignore-remote-name"
                                         <> help "Ignore remote by its name"
@@ -88,3 +101,8 @@ parser = subparser $ mconcat
                                        <> help "Ignore remote by its name"
                                        )
       ]
+    dryRunParser = switch ( long "dry-run"
+                         <> help "Do nothing")
+    keyParser =  many $ strArgument ( help    "Repo trees to check"
+                                   <> metavar "TREE"
+                                    )
