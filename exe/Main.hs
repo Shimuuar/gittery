@@ -9,7 +9,6 @@ module Main where
 import Control.Monad
 import Data.Foldable
 import Control.Monad.Trans.Reader
-import           Data.Text   (Text)
 import qualified Data.Text as T
 import qualified Data.Yaml as Yaml
 import qualified Data.HashMap.Strict as HM
@@ -43,8 +42,8 @@ main = do
     dir  <- getXdgDirectory XdgConfig "gittery"
     cfgs <- listDirectory dir
     fmap concat $ forM cfgs $ \c -> do
-      let ext    = takeExtension c
-          isYaml = ext == ".yml" || ext == ".yaml"
+      let (nm,ext) = splitExtension c
+          isYaml   = ext == ".yml" || ext == ".yaml"
       case isYaml of
         False -> return []
         True  -> Yaml.decodeFileEither (dir </> c) >>= \case
@@ -54,7 +53,7 @@ main = do
           Right x -> case traverse (HM.lookup (T.pack hostname)) x of
             Nothing -> do putStrLn ("No entry for hostname `"++hostname++"' in "++c)
                           exitFailure
-            Just y  -> return [(c, y)]
+            Just y  -> return [(nm, y)]
   --
   cmd repositories
 
