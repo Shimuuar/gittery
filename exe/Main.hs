@@ -61,28 +61,22 @@ main = do
 
 parser :: Parser ([(FilePath, RepositoryTree FilePath)] -> IO ())
 parser = subparser $ mconcat
-  [ command "check" $
-    info (pure checkRepositories) (progDesc "Check all repositories")
-  , command "fetch" $
-    flip info (progDesc "Fetch for all repositories") $ helper <*> do
+  [ command "check" $ wrap "Check all repositories"     $ pure checkRepositories
+  , command "fetch" $ wrap "Fetch for all repositories" $ do
       ctxRepoParams <- ignoreParser
       ctxDryRun     <- switch (  long "dry-run"
                               <> help "Do nothing")
       pure $ flip runReaderT Ctx{..} . fetchRepo
-  , command "push" $
-    flip info (progDesc "Try to push all changes to repository") $ helper <*> do
+  , command "push" $ wrap "Try to push all changes to repository" $ do
       ctxRepoParams <- ignoreParser
       ctxDryRun     <- switch (  long "dry-run"
                               <> help "Do nothing")
       pure $ flip runReaderT Ctx{..} . pushRepo
-  , command "init" $
-    flip info (progDesc "Create all missing repositories") $ helper <*> do
-      pure cloneRepo
-  , command "ls" $
-    flip info (progDesc "List all repository groups") $ helper <*> do
-      pure lsRepo
-  ]
+  , command "init" $ wrap "Create all missing repositories" $ pure cloneRepo
+  , command "ls"   $ wrap "List all repository groups"      $ pure lsRepo
+   ]
   where
+    wrap hlp p   = (helper <*> p) `info` progDesc hlp
     ignoreParser =  many $ asum
       [ IgnoreRemoteName   <$> strOption ( long "ignore-remote-name"
                                         <> help "Ignore remote by its name"
