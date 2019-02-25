@@ -22,7 +22,7 @@ Executable gittery
                   , unordered-containers
                   , optparse-applicative >=0.14
                   , hostname
-                  , yaml                 >=0.11
+                  , yaml                 >=0.10
                   , directory
                   , filepath
                   , transformers
