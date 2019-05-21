@@ -85,6 +85,7 @@ parser = subparser $ mconcat
       keys          <- keyParser
       pure $ flip runReaderT Ctx{..} . pushRepo . filterArguments keys
   , command "init" $ wrap "Create all missing repositories" $ pure cloneRepo
+  , command "set-remote" $ wrap "Set all remotes to values from config" $ pure setRemotes
   , command "ls"   $ wrap "List all repository groups"      $ pure lsRepo
    ]
   where

@@ -10,17 +10,16 @@ module Gittery.Commands (
   , fetchRepo
   , pushRepo
   , cloneRepo
+  , setRemotes
   , lsRepo
   ) where
 
 import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
-import Control.Monad.Trans.Writer
 import Control.Monad.Trans.Reader
 import           Data.Char (isSpace)
 import           Data.List
-import           Data.Foldable
 import qualified Data.Text as T
 import           Data.Text (Text)
 import qualified Data.HashMap.Strict as HM
@@ -173,8 +172,29 @@ cloneRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
                     forM_ (remoteList repo) $ \(r,url) ->
                       run' "git" ["remote", "add", T.unpack r, T.unpack url]
 
+setRemotes :: [(FilePath, RepositoryTree FilePath)] -> IO ()
+setRemotes = mapM_ $ \(treeName, RepositoryTree{..}) -> do
+  putStrLn ("==== " ++ treeName)
+  --
+  forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
+    liftIO $ putStrLn ("* " ++ T.unpack nm)
+    let dir = treeLocation </> T.unpack nm
+    doesDirectoryExist dir >>= \case
+      False -> putStrLn "Missing repo"
+      True  -> do
+        setCurrentDirectory dir
+        case repoType of
+          HG  -> do forM_ (remoteList repo) $ \(r,url) ->
+                      run' "crudini" ["--set", ".hg/hgrc", "paths", T.unpack r, T.unpack url]
+          GIT -> do remotes <- map T.pack . lines <$> readProcess "git" ["remote"] ""
+                    forM_ (remoteList repo) $ \(r,url) -> do
+                      let cmd = if r `elem` remotes then "set-url" else "add"
+                      run' "git" ["remote", cmd, T.unpack r, T.unpack url]
+
 lsRepo :: [(FilePath, RepositoryTree FilePath)] -> IO ()
 lsRepo = mapM_ $ \(treeName, _) -> putStrLn treeName
+
+
 
 ----------------------------------------------------------------
 -- Utils
