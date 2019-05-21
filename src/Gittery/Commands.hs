@@ -18,6 +18,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Writer
 import Control.Monad.Trans.Reader
+import           Data.Char (isSpace)
 import           Data.List
 import           Data.Foldable
 import qualified Data.Text as T
@@ -52,6 +53,8 @@ data Ctx = Ctx
 data RepoErr
   = IOErr   !IOException        -- ^ IO exception during processing repository
   | RepoErr !Text               -- ^ Some error
+  | MissingRemote !Text
+  | BadRemote     !Text !Text !Text
   deriving (Show)
 
 
@@ -73,12 +76,15 @@ checkRepositories = mapM_ $ \(treeName, RepositoryTree{..}) -> do
     putStrLn $ "Unexpected repo: " ++ T.unpack nm
   -- Run checks
   forM_ (HM.toList treeRepos) $ \(nm, repo) ->
-    when (HS.member nm realRepos) $
+    when (HS.member nm realRepos) $ do
       checkUncommited treeLocation nm repo >>= \case
         []   -> return ()
         errs -> do putStrLn ("* " ++ T.unpack nm)
                    mapM_ print errs
-
+      checkRemotes treeLocation nm repo >>= \case
+        []   -> return ()
+        errs -> do putStrLn ("* " ++ T.unpack nm)
+                   mapM_ print errs
 
 checkUncommited :: FilePath -> Text -> Repository -> IO [RepoErr]
 checkUncommited tree repo Repository{..} = descend tree repo $ do
@@ -87,6 +93,34 @@ checkUncommited tree repo Repository{..} = descend tree repo $ do
         GIT -> readProcess "git" ["status", "-s", "-uno"]
   r <- command ""
   return [RepoErr $ T.pack ("Uncommited: " ++ l) | l <- lines r]
+
+checkRemotes :: FilePath -> Text -> Repository -> IO [RepoErr]
+checkRemotes tree repo repository@Repository{..} = descend tree repo $ do
+  -- Read remotes
+  remotes <- case repoType of
+    HG  -> do
+      names   <- readProcess "crudini" ["--get", ".hg/hgrc", "paths"] ""
+      fmap HM.fromList $ forM (lines names) $ \nm -> do
+        path <- readProcess "crudini" ["--get", ".hg/hgrc", "paths", nm] ""
+        return (T.pack nm, T.strip $ T.pack path)
+    GIT -> do
+      output <- readProcess "git" ["remote", "-v"] ""
+      return $ HM.fromList
+        [ (T.strip nm, T.strip path)
+        | line       <- T.strip . T.pack <$> lines output
+        , Just clear <- [T.stripSuffix "(fetch)" line]
+        , let (nm,path) = T.span (not . isSpace) clear
+        ]
+  --
+  let expected = remoteMap repository
+      missing  = HM.difference expected remotes
+      wrong    = [ BadRemote nm e r
+                 | (nm, (e,r)) <- HM.toList
+                               $ HM.intersectionWith (,) expected remotes
+                 , e /= r
+                 ]
+  return $ (MissingRemote <$> HM.keys missing)
+        ++ wrong
 
 descend :: FilePath -> Text -> IO [RepoErr] -> IO [RepoErr]
 descend loc repo action

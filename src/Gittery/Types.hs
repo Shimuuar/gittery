@@ -42,6 +42,11 @@ data RepoType
   | HG
   deriving (Show, Eq)
 
+remoteMap :: Repository -> HashMap Text Text
+remoteMap (Repository HG  (RemoteSimple t)) = HM.singleton "default" t
+remoteMap (Repository GIT (RemoteSimple t)) = HM.singleton "origin" t
+remoteMap (Repository _   (RemoteMany  ts)) = ts
+
 instance FromJSON RepoType where
   parseJSON = withText "" $ \s -> case T.toLower s of
     "hg"  -> pure HG
