@@ -41,23 +41,9 @@ import System.Console.ANSI qualified as Term
 
 import Gittery.Types
 
-
 ----------------------------------------------------------------
-
--- -- | Flags for ignoring repositories and such
--- data RepoParams
---   = IgnoreRemoteName   !Text
---   | IgnoreRemotePrefix !Text
---   | IgnoreRemoteInfix  !Text
---   deriving (Show)
-
--- data Ctx = Ctx
---   { ctxRepoParams :: [RepoParams]
---   , ctxDryRun     :: Bool
---   }
---   deriving (Show)
-
--- ----------------------------------------------------------------
+-- Reports
+----------------------------------------------------------------
 
 -- | Error that occured 
 data GitErr
@@ -79,6 +65,7 @@ data Report a = Report
   }
   deriving stock (Show)
 
+pattern OK :: Report a
 pattern OK = Report [] []
 
 instance Semigroup (Report a) where
@@ -173,51 +160,39 @@ lsRepo reposet = forM_ (Map.toList reposet) $ \(nm, repo) -> do
 -- | Set correct remotes for all repositories
 setRemotes :: RepositoryGroup FilePath
            -> IO ()
-setRemotes grp = forM_ (Map.toList grp.repos) $ \(k,repo) -> do
-  let dir = grp.host </> k
-  doesDirectoryExist dir >>= \case
-    False -> pure ()
-    True  -> do
-      setCurrentDirectory dir
-      remotes <- gitRemotes
-      let expected = repo.remote
-          missing = HM.toList $ HM.difference expected remotes
-          wrong   = [ (nm, e)
-                    | (nm, (e,r)) <- HM.toList
-                                   $ HM.intersectionWith (,) expected remotes
-                    , e /= r
-                    ]
-      when (not (null missing) || not (null wrong)) $ do
-        putStrLn $ "  * " ++ k
-        forM_ missing $ \(nm,url) -> do
-          runCommandVerbose "git" ["remote", "add", T.unpack nm, T.unpack url]
-        forM_ wrong   $ \(nm,url) -> do
-          runCommandVerbose "git" ["remote", "set-url", T.unpack nm, T.unpack url]
+setRemotes = traverseExistingRepo_ $ \nm repo -> do
+  remotes <- gitRemotes
+  let expected = repo.remote
+      missing  = HM.toList $ HM.difference expected remotes
+      wrong    = [ (k, e)
+                 | (k, (e,r)) <- HM.toList
+                               $ HM.intersectionWith (,) expected remotes
+                 , e /= r
+                 ]
+  when (not (null missing) || not (null wrong)) $ do
+    putStrLn $ "  * " ++ nm
+    forM_ missing $ \(nm,url) -> do
+      runCommandVerbose "git" ["remote", "add", T.unpack nm, T.unpack url]
+    forM_ wrong   $ \(nm,url) -> do
+      runCommandVerbose "git" ["remote", "set-url", T.unpack nm, T.unpack url]
 
+-- | Clone and fetch missing repository
 cloneRepo :: RepositoryGroup FilePath -> IO ()
-cloneRepo grp = forM_ (Map.toList grp.repos) $ \(k,repo) -> do
-  let dir = grp.host </> k
-  doesDirectoryExist dir >>= \case
-    True -> pure ()
-    False -> do
-      putStrLn $ "  * " ++ k
-      createDirectoryIfMissing True dir
-      setCurrentDirectory dir
-      runCommandVerbose "git" ["init"]
-      forM_ (HM.toList repo.remote) $ \(r,url) -> do
-        runCommandVerbose "git" ["remote", "add", T.unpack r, T.unpack url]
-        runCommandVerbose "git" ["fetch", T.unpack r]
+cloneRepo = traverseMissingRepo_ $ \dir nm repo -> do
+  putStrLn $ "  * " ++ nm
+  createDirectoryIfMissing True dir
+  setCurrentDirectory dir
+  runCommandVerbose "git" ["init"]
+  forM_ (HM.toList repo.remote) $ \(r,url) -> do
+    runCommandVerbose "git" ["remote", "add", T.unpack r, T.unpack url]
+    runCommandVerbose "git" ["fetch", T.unpack r]
 
+-- | Fetch from each remote
 fetchRepo :: RepositoryGroup FilePath -> IO ()
-fetchRepo grp = forM_ (Map.toList grp.repos) $ \(k,repo) -> do
-  let dir = grp.host </> k
-  doesDirectoryExist dir >>= \case
-    False -> pure ()
-    True  -> do
-      putStrLn $ "  * " ++ k
-      setCurrentDirectory dir
-      forM_ (HM.toList repo.remote) $ \(r,url) -> do
-        runCommandVerbose "git" ["fetch", T.unpack r]
+fetchRepo = traverseExistingRepo_ $ \nm repo -> do
+  putStrLn $ "  * " ++ nm
+  forM_ (HM.toList repo.remote) $ \(r,_url) -> do
+    runCommandVerbose "git" ["fetch", T.unpack r]
 
 
 ----------------------------------------------------------------
@@ -335,3 +310,34 @@ run' exe args =
 --   asks ctxDryRun >>= \case
 --     True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
 --     False -> cont =<< liftIO (readProcess exe args "")
+
+
+----------------------------------------------------------------
+-- Traversals
+----------------------------------------------------------------
+
+-- | Visit eah repository which already exists
+traverseExistingRepo_
+  :: (String -> Repository -> IO a)
+  -> RepositoryGroup FilePath
+  -> IO ()
+traverseExistingRepo_ go grp =
+  forM_ (Map.toList grp.repos) $ \(nm,repo) -> do
+    let dir = grp.host </> nm
+    doesDirectoryExist dir >>= \case
+      False -> pure ()
+      True  -> do setCurrentDirectory dir
+                  void $ go nm repo
+
+-- | Visit eah repository which already exists
+traverseMissingRepo_
+  :: (FilePath -> String -> Repository -> IO a)
+  -> RepositoryGroup FilePath
+  -> IO ()
+traverseMissingRepo_ go grp =
+  forM_ (Map.toList grp.repos) $ \(nm,repo) -> do
+    let dir = grp.host </> nm
+    doesDirectoryExist dir >>= \case
+      False -> void $ go dir nm repo
+      True  -> pure ()
+                  
