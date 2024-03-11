@@ -73,6 +73,9 @@ data RepositoryGroup a = RepositoryGroup
     -- ^ Information about hosts
   , repos :: !(Map FilePath Repository)
     -- ^ Collection of repositories in the group
+  , no_unknown :: !Bool
+    -- ^ Whether we should check that directory doesn not contains
+    --   unknown repos
   }
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
@@ -105,6 +108,7 @@ instance FromJSON a => FromJSON (RepositoryGroup a) where
     ("directory"::Text) <- o .: "type"
     host  <- o .: "host"
     repos <- o .: "repos"
+    no_unknown <- o .:? "no_unknown" .!= False
     unless (all validPath (Map.keys repos)) $
       fail "Invalid repository name"    
     pure RepositoryGroup{..}

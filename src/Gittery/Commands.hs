@@ -45,12 +45,14 @@ import Gittery.Types
 -- Reports
 ----------------------------------------------------------------
 
--- | Error that occured 
+-- | Error that occured
 data GitErr
   = IOErr   !IOException
     -- ^ IO exception during processing repository
   | MissingRepository
     -- ^ Repository is missing
+  | UnknownRepository FilePath
+    -- ^ There's exists repository not listed it config
   | MissingRemote !Text !Text
     -- ^ Remote is missing from repository
   | BadRemote     !Text !Text !Text
@@ -84,12 +86,16 @@ reportHeader s = do
 report :: Map String (Report GitErr) -> IO ()
 report (Map.toList -> reps) =
   forM_ reps $ \(nm,r) -> do
-    putStr nm >> putStr (replicate (n + 4 - length nm) ' ')
+    case nm of
+      "" -> pure ()
+      _  -> putStr nm >> putStr (replicate (n + 4 - length nm) ' ')
     case r of
-      Report [] [] -> do
-        Term.setSGR [Term.SetColor Term.Foreground Term.Vivid Term.Green]
-        putStrLn "OK"
-        Term.setSGR [Term.Reset]
+      Report [] []
+        | "" <- nm -> pure ()
+        | otherwise -> do
+            Term.setSGR [Term.SetColor Term.Foreground Term.Vivid Term.Green]
+            putStrLn "OK"
+            Term.setSGR [Term.Reset]
       Report warn []   -> do
         withColor Term.Yellow $ putStrLn "WARN"
         reportErr Term.Yellow warn
@@ -109,13 +115,14 @@ report (Map.toList -> reps) =
     --
     withColor col action = do
       Term.setSGR [Term.SetColor Term.Foreground Term.Vivid col]
-      action
+      _ <- action
       Term.setSGR [Term.Reset]
 
 pprGitErr :: GitErr -> [String]
 pprGitErr = \case
   IOErr e -> ["IO exception: " <> show e]
   MissingRepository -> ["Missing repository"]
+  UnknownRepository r -> ["UnknownRepository " ++ show r]
   MissingRemote nm url -> ["Missing remote " <> T.unpack nm <> ": " <> T.unpack url]
   BadRemote nm e r ->
     [ "Bad remote " <> T.unpack nm
@@ -132,15 +139,24 @@ pprGitErr = \case
 checkRepositories
   :: RepositoryGroup FilePath
   -> IO (Map String (Report GitErr))
-checkRepositories grp = flip Map.traverseWithKey grp.repos $ \k r -> do
-  let dir = grp.host </> k
-  doesDirectoryExist dir >>= \case
-    False -> pure Report{warn=[], errs=[MissingRepository]}
-    True  -> checkRepository dir r
---   forM_ (expectedRepos `HS.difference` realRepos) $ \nm -> do
---     putStrLn $ "Missing repo: " ++ T.unpack nm
---   forM_ (realRepos `HS.difference` expectedRepos) $ \nm -> do
---     putStrLn $ "Unexpected repo: " ++ T.unpack nm
+checkRepositories grp = mconcat
+  [ flip Map.traverseWithKey grp.repos $ \k r -> do
+      let dir = grp.host </> k
+      doesDirectoryExist dir >>= \case
+        False -> pure Report{warn=[], errs=[MissingRepository]}
+        True  -> checkRepository dir r
+    -- FIXME: We're using hack by representing "" as related to group as whole
+  , if grp.no_unknown
+    then do dirs <- listDirectory grp.host
+            return $ Map.singleton "" Report
+              { warn = [ UnknownRepository nm
+                       | nm <- dirs
+                       , nm `Map.notMember` grp.repos
+                       ]
+              , errs = []
+              }
+    else do pure mempty
+  ]
 
 -- | Check single repository
 checkRepository
@@ -171,10 +187,10 @@ setRemotes = traverseExistingRepo_ $ \nm repo -> do
                  ]
   when (not (null missing) || not (null wrong)) $ do
     putStrLn $ "  * " ++ nm
-    forM_ missing $ \(nm,url) -> do
-      runCommandVerbose "git" ["remote", "add", T.unpack nm, T.unpack url]
-    forM_ wrong   $ \(nm,url) -> do
-      runCommandVerbose "git" ["remote", "set-url", T.unpack nm, T.unpack url]
+    forM_ missing $ \(k,url) -> do
+      runCommandVerbose "git" ["remote", "add", T.unpack k, T.unpack url]
+    forM_ wrong   $ \(k,url) -> do
+      runCommandVerbose "git" ["remote", "set-url", T.unpack k, T.unpack url]
 
 -- | Clone and fetch missing repository
 cloneRepo :: RepositoryGroup FilePath -> IO ()
@@ -340,4 +356,3 @@ traverseMissingRepo_ go grp =
     doesDirectoryExist dir >>= \case
       False -> void $ go dir nm repo
       True  -> pure ()
-                  
