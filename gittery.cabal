@@ -14,9 +14,16 @@ Build-Type:     Simple
 
 Executable gittery
   Ghc-options:      -Wall
-  Default-Language: Haskell2010
+  Default-Language: GHC2021
+  Default-Extensions:
+        NoPolyKinds
+        DerivingStrategies
+        OverloadedRecordDot
+        DuplicateRecordFields
+        NoFieldSelectors
+        LambdaCase
   Build-Depends:    base                 >=4.9 && <5
-                  , aeson 
+                  , aeson                >=2
                   , text                 >=1
                   , containers
                   , unordered-containers
@@ -27,6 +34,7 @@ Executable gittery
                   , filepath
                   , transformers
                   , process
+                  , ansi-terminal
   hs-source-dirs:   exe src
   Main-is:          Main.hs
   Other-modules:

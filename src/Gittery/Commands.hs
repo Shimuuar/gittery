@@ -1,237 +1,306 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns        #-}
 -- |
-module Gittery.Commands (
-    RepoParams(..)
-  , Ctx(..)
+module Gittery.Commands
+  ( -- * Reports
+    Report(..)
+  , reportHeader
+  , report
+    -- * Actions
   , checkRepositories
-  , fetchRepo
-  , pushRepo
-  , cloneRepo
-  , setRemotes
   , lsRepo
+  , setRemotes
+  , fetchRepo
+  -- , pushRepo
+  , cloneRepo
   ) where
 
 import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
-import           Data.Char (isSpace)
-import           Data.List
-import qualified Data.Text as T
-import           Data.Text (Text)
-import qualified Data.HashMap.Strict as HM
-import qualified Data.HashSet        as HS
+import Data.Char (isSpace)
+-- import Data.List
+import Data.Text qualified as T
+import Data.Text (Text)
+import Data.HashMap.Strict qualified as HM
+import Data.HashSet        qualified as HS
+import Data.Map.Strict     qualified as Map
+import Data.Map.Strict     (Map)
+import Data.Foldable
+import Data.Traversable
 import System.Directory
 import System.FilePath
 import System.Process
 import System.Exit
+import System.Console.ANSI qualified as Term
 
 import Gittery.Types
 
 
 ----------------------------------------------------------------
 
--- | Flags for ignoring repositories and such
-data RepoParams
-  = IgnoreRemoteName   !Text
-  | IgnoreRemotePrefix !Text
-  | IgnoreRemoteInfix  !Text
-  deriving (Show)
+-- -- | Flags for ignoring repositories and such
+-- data RepoParams
+--   = IgnoreRemoteName   !Text
+--   | IgnoreRemotePrefix !Text
+--   | IgnoreRemoteInfix  !Text
+--   deriving (Show)
 
-data Ctx = Ctx
-  { ctxRepoParams :: [RepoParams]
-  , ctxDryRun     :: Bool
+-- data Ctx = Ctx
+--   { ctxRepoParams :: [RepoParams]
+--   , ctxDryRun     :: Bool
+--   }
+--   deriving (Show)
+
+-- ----------------------------------------------------------------
+
+-- data RepoErr
+--   = IOErr   !IOException        -- ^ IO exception during processing repository
+--   | RepoErr !Text               -- ^ Some error
+--   | MissingRemote !Text
+--   | BadRemote     !Text !Text !Text
+--   deriving (Show)
+
+data Report a = Report
+  { warn :: [a]
+  , errs :: [a]
   }
-  deriving (Show)
+  deriving stock (Show)
 
-----------------------------------------------------------------
+pattern OK = Report [] []
 
-data RepoErr
-  = IOErr   !IOException        -- ^ IO exception during processing repository
-  | RepoErr !Text               -- ^ Some error
-  | MissingRemote !Text
-  | BadRemote     !Text !Text !Text
-  deriving (Show)
+instance Semigroup (Report a) where
+  a <> b = Report { warn = a.warn <> b.warn
+                  , errs = a.errs <> b.errs
+                  }
+instance Monoid (Report a) where
+  mempty = Report [] []
 
+reportHeader :: String -> IO ()
+reportHeader s = do
+  putStr "====  "
+  putStr s
+  putStrLn "  ===="
+
+report :: Map String (Report [Text]) -> IO ()
+report (Map.toList -> reps) =
+  forM_ reps $ \(nm,r) -> do
+    putStr nm >> putStr (replicate (n + 4 - length nm) ' ')
+    case r of
+      Report [] [] -> do
+        Term.setSGR [Term.SetColor Term.Foreground Term.Vivid Term.Green]
+        putStrLn "OK"
+        Term.setSGR [Term.Reset]
+      Report warn []   -> do
+        withColor Term.Yellow $ putStrLn "WARN"
+        reportErr Term.Yellow warn
+      Report _    errs -> do
+        withColor Term.Red $ putStrLn "ERROR"
+        reportErr Term.Red errs
+  where
+    n = maximum $ map (length . fst) reps
+    reportErr col errs = do
+      forM_ errs $ \case
+        []     -> pure ()
+        (s:ss) -> do
+          putStr "  * "
+          withColor col $ do
+            putStrLn $ T.unpack s
+            mapM_ (putStrLn . ("    " ++) . T.unpack) ss
+    --
+    withColor col action = do
+      Term.setSGR [Term.SetColor Term.Foreground Term.Vivid col]
+      action
+      Term.setSGR [Term.Reset]
 
 
 ----------------------------------------------------------------
 -- Checking repositories
 ----------------------------------------------------------------
 
-checkRepositories :: [(FilePath, RepositoryTree FilePath)] -> IO ()
-checkRepositories = mapM_ $ \(treeName, RepositoryTree{..}) -> do
-  putStrLn ("==== " ++ treeName)
-  --
-  realRepos <- HS.fromList . map T.pack <$> listDirectory treeLocation
-  let expectedRepos = HS.fromList $ HM.keys treeRepos
-  -- Missing & unexpected
-  forM_ (expectedRepos `HS.difference` realRepos) $ \nm -> do
-    putStrLn $ "Missing repo: " ++ T.unpack nm
-  forM_ (realRepos `HS.difference` expectedRepos) $ \nm -> do
-    putStrLn $ "Unexpected repo: " ++ T.unpack nm
-  -- Run checks
-  forM_ (HM.toList treeRepos) $ \(nm, repo) ->
-    when (HS.member nm realRepos) $ do
-      checkUncommited treeLocation nm repo >>= \case
-        []   -> return ()
-        errs -> do putStrLn ("* " ++ T.unpack nm)
-                   mapM_ print errs
-      checkRemotes treeLocation nm repo >>= \case
-        []   -> return ()
-        errs -> do putStrLn ("* " ++ T.unpack nm)
-                   mapM_ print errs
+-- | Check group of repositories
+checkRepositories
+  :: RepositoryGroup FilePath
+  -> IO (Map String (Report [Text]))
+checkRepositories grp = flip Map.traverseWithKey grp.repos $ \k r -> do
+  let dir = grp.host </> k
+  doesDirectoryExist dir >>= \case
+    False -> pure Report{warn=[], errs=[["Missing repository"]]}
+    True  -> checkRepository dir r
+--   forM_ (expectedRepos `HS.difference` realRepos) $ \nm -> do
+--     putStrLn $ "Missing repo: " ++ T.unpack nm
+--   forM_ (realRepos `HS.difference` expectedRepos) $ \nm -> do
+--     putStrLn $ "Unexpected repo: " ++ T.unpack nm
 
-checkUncommited :: FilePath -> Text -> Repository -> IO [RepoErr]
-checkUncommited tree repo Repository{..} = descend tree repo $ do
-  let command = case repoType of
-        HG  -> readProcess "hg"  ["status", "-q"]
-        GIT -> readProcess "git" ["status", "-s", "-uno"]
-  r <- command ""
-  return [RepoErr $ T.pack ("Uncommited: " ++ l) | l <- lines r]
+-- | Check single repository
+checkRepository
+  :: FilePath   -- ^ Directory with a repo
+  -> Repository -- ^ Repository description
+  -> IO (Report [Text])
+checkRepository path repo = captureIOErr $ do
+  setCurrentDirectory path
+  gitCheckRemotes repo <> gitCheckUncommited
 
-checkRemotes :: FilePath -> Text -> Repository -> IO [RepoErr]
-checkRemotes tree repo repository@Repository{..} = descend tree repo $ do
-  -- Read remotes
-  remotes <- case repoType of
-    HG  -> do
-      names   <- readProcess "crudini" ["--get", ".hg/hgrc", "paths"] ""
-      fmap HM.fromList $ forM (lines names) $ \nm -> do
-        path <- readProcess "crudini" ["--get", ".hg/hgrc", "paths", nm] ""
-        return (T.pack nm, T.strip $ T.pack path)
-    GIT -> do
-      output <- readProcess "git" ["remote", "-v"] ""
-      return $ HM.fromList
-        [ (T.strip nm, T.strip path)
-        | line       <- T.strip . T.pack <$> lines output
-        , Just clear <- [T.stripSuffix "(fetch)" line]
-        , let (nm,path) = T.span (not . isSpace) clear
-        ]
-  --
-  let expected = remoteMap repository
-      missing  = HM.difference expected remotes
-      wrong    = [ BadRemote nm e r
+-- | List know repositories
+lsRepo :: Map String (RepositoryGroup FilePath) -> IO ()
+lsRepo reposet = forM_ (Map.toList reposet) $ \(nm, repo) -> do
+  reportHeader (nm ++ " [" ++ repo.host ++ "]")
+  forM_ (Map.keys repo.repos) $ \k -> putStrLn ("  * " ++ k)
+
+-- | Set correct remotes for all repositories
+setRemotes :: RepositoryGroup FilePath
+           -> IO ()
+setRemotes grp = forM_ (Map.toList grp.repos) $ \(k,repo) -> do
+  let dir = grp.host </> k
+  doesDirectoryExist dir >>= \case
+    False -> pure ()
+    True  -> do
+      setCurrentDirectory dir
+      remotes <- gitRemotes
+      let expected = repo.remote
+          missing = HM.toList $ HM.difference expected remotes
+          wrong   = [ (nm, e)
+                    | (nm, (e,r)) <- HM.toList
+                                   $ HM.intersectionWith (,) expected remotes
+                    , e /= r
+                    ]
+      when (not (null missing) || not (null wrong)) $ do
+        putStrLn $ "  * " ++ k
+        forM_ missing $ \(nm,url) -> do
+          runCommandVerbose "git" ["remote", "add", T.unpack nm, T.unpack url]
+        forM_ wrong   $ \(nm,url) -> do
+          runCommandVerbose "git" ["remote", "set-url", T.unpack nm, T.unpack url]
+
+cloneRepo :: RepositoryGroup FilePath -> IO ()
+cloneRepo grp = forM_ (Map.toList grp.repos) $ \(k,repo) -> do
+  let dir = grp.host </> k
+  doesDirectoryExist dir >>= \case
+    True -> pure ()
+    False -> do
+      putStrLn $ "  * " ++ k
+      createDirectoryIfMissing True dir
+      setCurrentDirectory dir
+      runCommandVerbose "git" ["init"]
+      forM_ (HM.toList repo.remote) $ \(r,url) -> do
+        runCommandVerbose "git" ["remote", "add", T.unpack r, T.unpack url]
+        runCommandVerbose "git" ["fetch", T.unpack r]
+
+fetchRepo :: RepositoryGroup FilePath -> IO ()
+fetchRepo grp = forM_ (Map.toList grp.repos) $ \(k,repo) -> do
+  let dir = grp.host </> k
+  doesDirectoryExist dir >>= \case
+    False -> pure ()
+    True  -> do
+      putStrLn $ "  * " ++ k
+      setCurrentDirectory dir
+      forM_ (HM.toList repo.remote) $ \(r,url) -> do
+        runCommandVerbose "git" ["fetch", T.unpack r]
+
+
+----------------------------------------------------------------
+-- Git interactions
+----------------------------------------------------------------
+
+gitRemotes :: IO (HM.HashMap Text Text)
+gitRemotes = do
+  output <- readProcess "git" ["remote", "--verbose"] ""
+  -- NOTE: Here we assume that (fetch/push) remotes are identical
+  return $ HM.fromList
+    [ (T.strip nm, T.strip path)
+    | line       <- T.strip . T.pack <$> lines output
+    , Just clear <- [T.stripSuffix "(fetch)" line]
+    , let (nm,path) = T.span (not . isSpace) clear
+    ]
+
+-- | Check for uncommmited files in repository
+gitCheckUncommited :: IO (Report [Text])
+gitCheckUncommited = do
+  r <- readProcess "git" ["status", "-s", "-uno"] ""
+  return Report{ warn = [ ["Uncommited: " <> T.pack l]
+                        | l <- lines r]
+               , errs = []
+               }
+
+-- | Check remotes of a repository in current working dir
+gitCheckRemotes :: Repository -> IO (Report [Text])
+gitCheckRemotes repo = do
+  remotes <- gitRemotes
+  let expected = repo.remote
+      missing  = [ ["Missing remote " <> nm <> ": " <> url]
+                 | (nm,url) <- HM.toList $ HM.difference expected remotes
+                 ]
+      wrong    = [ [ "Bad remote " <> nm
+                   , " expected: " <> e
+                   , " real:     " <> r
+                   ]
                  | (nm, (e,r)) <- HM.toList
-                               $ HM.intersectionWith (,) expected remotes
+                                $ HM.intersectionWith (,) expected remotes
                  , e /= r
                  ]
-  return $ (MissingRemote <$> HM.keys missing)
-        ++ wrong
+  pure Report { warn = []
+              , errs = missing ++ wrong
+              }
 
-descend :: FilePath -> Text -> IO [RepoErr] -> IO [RepoErr]
-descend loc repo action
-  = catch (do setCurrentDirectory $ loc </> T.unpack repo
-              action)
-  $ \e -> return [IOErr e]
+captureIOErr :: IO (Report [Text]) -> IO (Report [Text])
+captureIOErr = handle $ \(e :: IOException) ->
+  pure Report { warn = []
+              , errs = [["IO exception: " <> T.pack (show e)]]
+              }
 
-
-----------------------------------------------------------------
--- Commands
-----------------------------------------------------------------
-
-fetchRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
-fetchRepo = foreachRemote $ \ty (r,_) -> case ty of
-  HG  -> runStdout "hg"  ["pull", T.unpack r] $ \s ->
-    unless ("no changes found" `isInfixOf` s) (liftIO $ putStr s)
-  GIT -> run "git" ["fetch", T.unpack r]
-
-pushRepo :: [(FilePath, RepositoryTree FilePath)] -> ReaderT Ctx IO ()
-pushRepo = foreachRemote $ \ty (r,_) -> case ty of
-  -- FIXME: special case hg push (we need to treat exit code specially)
-  HG  -> do
-    let exe  = "hg"
-        args = ["push", T.unpack r]
-    asks ctxDryRun >>= \case
-      True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
-      False -> liftIO (rawSystem exe args) >>= \case
-        ExitSuccess   -> return ()
-        ExitFailure 1 -> return ()
-        ExitFailure i -> error ("ExitFailure: " ++ show i)
-  GIT -> run "git" ["push", T.unpack r, "master"]
-
-cloneRepo :: [(FilePath, RepositoryTree FilePath)] -> IO ()
-cloneRepo = mapM_ $ \(treeName, RepositoryTree{..}) -> do
-  putStrLn ("==== " ++ treeName)
-  --
-  forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
-    liftIO $ putStrLn ("* " ++ T.unpack nm)
-    let dir = treeLocation </> T.unpack nm
-    doesDirectoryExist dir >>= \case
-      True  -> return ()
-      False -> do
-        createDirectoryIfMissing True dir
-        setCurrentDirectory dir
-        case repoType of
-          HG  -> do run' "hg" ["init"]
-                    forM_ (remoteList repo) $ \(r,url) ->
-                      run' "crudini" ["--set", ".hg/hgrc", "paths", T.unpack r, T.unpack url]
-          GIT -> do run' "git" ["init"]
-                    forM_ (remoteList repo) $ \(r,url) ->
-                      run' "git" ["remote", "add", T.unpack r, T.unpack url]
-
-setRemotes :: [(FilePath, RepositoryTree FilePath)] -> IO ()
-setRemotes = mapM_ $ \(treeName, RepositoryTree{..}) -> do
-  putStrLn ("==== " ++ treeName)
-  --
-  forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
-    liftIO $ putStrLn ("* " ++ T.unpack nm)
-    let dir = treeLocation </> T.unpack nm
-    doesDirectoryExist dir >>= \case
-      False -> putStrLn "Missing repo"
-      True  -> do
-        setCurrentDirectory dir
-        case repoType of
-          HG  -> do forM_ (remoteList repo) $ \(r,url) ->
-                      run' "crudini" ["--set", ".hg/hgrc", "paths", T.unpack r, T.unpack url]
-          GIT -> do remotes <- map T.pack . lines <$> readProcess "git" ["remote"] ""
-                    forM_ (remoteList repo) $ \(r,url) -> do
-                      let cmd = if r `elem` remotes then "set-url" else "add"
-                      run' "git" ["remote", cmd, T.unpack r, T.unpack url]
-
-lsRepo :: [(FilePath, RepositoryTree FilePath)] -> IO ()
-lsRepo = mapM_ $ \(treeName, _) -> putStrLn treeName
+runCommandVerbose
+  :: String -> [String] -> IO ()
+runCommandVerbose cmd args = do
+  putStr "$ "
+  putStr cmd
+  forM_ args $ \a -> putStr (' ':show a)
+  putStrLn ""
+  run' cmd args
 
 
 
-----------------------------------------------------------------
--- Utils
-----------------------------------------------------------------
-
-foreachRemote
-  :: (RepoType -> (Text,Text) -> ReaderT Ctx IO ())
-     -- ^ Action for each remote
-  -> [(FilePath, RepositoryTree FilePath)]
-     -- ^ List of repositories
-  -> ReaderT Ctx IO ()
-foreachRemote action = mapM_ $ \(treeName, RepositoryTree{..}) -> do
-  params <- asks ctxRepoParams
-  liftIO $ putStrLn ("==== " ++ treeName)
-  --
-  forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
-    liftIO $ putStrLn ("* " ++ T.unpack nm)
-    liftIO $ setCurrentDirectory $ treeLocation </> T.unpack nm
-    mapM_ (action repoType)
-      $ filter (acceptRemote params)
-      $ remoteList repo
 
 
-acceptRemote :: [RepoParams] -> (Text,Text) -> Bool
-acceptRemote params (remote,url)
-  = all (not . reject) params
-  where
-    reject (IgnoreRemoteName   nm)   = nm == remote
-    reject (IgnoreRemotePrefix prfx) = prfx `T.isPrefixOf` url
-    reject (IgnoreRemoteInfix  infx) = infx `T.isInfixOf`  url
+-- ----------------------------------------------------------------
+-- -- Utils
+-- ----------------------------------------------------------------
 
-remoteList :: Repository -> [(Text,Text)]
-remoteList Repository{..} = case remote of
-  RemoteMany   rs -> HM.toList rs
-  RemoteSimple r  -> case repoType of
-    HG  -> [("default", r)]
-    GIT -> [("origin",  r)]
+-- foreachRemote
+--   :: (RepoType -> (Text,Text) -> ReaderT Ctx IO ())
+--      -- ^ Action for each remote
+--   -> [(FilePath, RepositoryTree FilePath)]
+--      -- ^ List of repositories
+--   -> ReaderT Ctx IO ()
+-- foreachRemote action = mapM_ $ \(treeName, RepositoryTree{..}) -> do
+--   params <- asks ctxRepoParams
+--   liftIO $ putStrLn ("==== " ++ treeName)
+--   --
+--   forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
+--     liftIO $ putStrLn ("* " ++ T.unpack nm)
+--     liftIO $ setCurrentDirectory $ treeLocation </> T.unpack nm
+--     mapM_ (action repoType)
+--       $ filter (acceptRemote params)
+--       $ remoteList repo
+
+
+-- acceptRemote :: [RepoParams] -> (Text,Text) -> Bool
+-- acceptRemote params (remote,url)
+--   = all (not . reject) params
+--   where
+--     reject (IgnoreRemoteName   nm)   = nm == remote
+--     reject (IgnoreRemotePrefix prfx) = prfx `T.isPrefixOf` url
+--     reject (IgnoreRemoteInfix  infx) = infx `T.isInfixOf`  url
+
+-- remoteList :: Repository -> [(Text,Text)]
+-- remoteList Repository{..} = case remote of
+--   RemoteMany   rs -> HM.toList rs
+--   RemoteSimple r  -> case repoType of
+--     HG  -> [("default", r)]
+--     GIT -> [("origin",  r)]
 
 run' :: String -> [String] -> IO ()
 run' exe args =
@@ -239,16 +308,16 @@ run' exe args =
     ExitSuccess   -> return ()
     ExitFailure i -> error ("ExitFailure: " ++ show i)
 
-run :: String -> [String] -> ReaderT Ctx IO ()
-run exe args =
-  asks ctxDryRun >>= \case
-    True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
-    False -> liftIO (rawSystem exe args) >>= \case
-      ExitSuccess   -> return ()
-      ExitFailure i -> error ("ExitFailure: " ++ show i)
+-- run :: String -> [String] -> ReaderT Ctx IO ()
+-- run exe args =
+--   asks ctxDryRun >>= \case
+--     True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
+--     False -> liftIO (rawSystem exe args) >>= \case
+--       ExitSuccess   -> return ()
+--       ExitFailure i -> error ("ExitFailure: " ++ show i)
 
-runStdout :: String -> [String] -> (String -> ReaderT Ctx IO ()) -> ReaderT Ctx IO ()
-runStdout exe args cont =
-  asks ctxDryRun >>= \case
-    True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
-    False -> cont =<< liftIO (readProcess exe args "")
+-- runStdout :: String -> [String] -> (String -> ReaderT Ctx IO ()) -> ReaderT Ctx IO ()
+-- runStdout exe args cont =
+--   asks ctxDryRun >>= \case
+--     True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
+--     False -> cont =<< liftIO (readProcess exe args "")
