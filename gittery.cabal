@@ -33,7 +33,7 @@ Executable gittery
                   , directory
                   , filepath
                   , transformers
-                  , process
+                  , typed-process
                   , ansi-terminal
   hs-source-dirs:   exe src
   Main-is:          Main.hs

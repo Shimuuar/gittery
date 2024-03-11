@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE PatternSynonyms     #-}
@@ -25,17 +26,21 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 import Data.Char (isSpace)
 -- import Data.List
-import Data.Text qualified as T
-import Data.Text (Text)
-import Data.HashMap.Strict qualified as HM
-import Data.HashSet        qualified as HS
-import Data.Map.Strict     qualified as Map
-import Data.Map.Strict     (Map)
+import Data.Text                qualified as T
+import Data.Text.Lazy           qualified as TL
+import Data.Text                (Text)
+import Data.Text.Lazy.Encoding  qualified as TL
+import Data.Text.Encoding.Error qualified as T
+import Data.HashMap.Strict      qualified as HM
+import Data.HashSet             qualified as HS
+import Data.Map.Strict          qualified as Map
+import Data.Map.Strict          (Map)
 import Data.Foldable
 import Data.Traversable
 import System.Directory
 import System.FilePath
-import System.Process
+-- import System.Process
+import System.Process.Typed
 import System.Exit
 import System.Console.ANSI qualified as Term
 
@@ -49,6 +54,8 @@ import Gittery.Types
 data GitErr
   = IOErr   !IOException
     -- ^ IO exception during processing repository
+  | GitErr  [String]
+    -- ^ Git error
   | MissingRepository
     -- ^ Repository is missing
   | UnknownRepository FilePath
@@ -59,7 +66,8 @@ data GitErr
     -- ^ Remote has incorrect URL
   | Uncommited FilePath
     -- ^ Uncommited file
-  deriving (Show)
+  deriving stock (Show)
+  deriving anyclass Exception
 
 data Report a = Report
   { warn :: [a]
@@ -121,6 +129,7 @@ report (Map.toList -> reps) =
 pprGitErr :: GitErr -> [String]
 pprGitErr = \case
   IOErr e -> ["IO exception: " <> show e]
+  GitErr e -> e
   MissingRepository -> ["Missing repository"]
   UnknownRepository r -> ["UnknownRepository " ++ show r]
   MissingRemote nm url -> ["Missing remote " <> T.unpack nm <> ": " <> T.unpack url]
@@ -217,7 +226,7 @@ fetchRepo = traverseExistingRepo_ $ \nm repo -> do
 
 gitRemotes :: IO (HM.HashMap Text Text)
 gitRemotes = do
-  output <- readProcess "git" ["remote", "--verbose"] ""
+  output <- readGitOutput ["remote", "--verbose"]
   -- NOTE: Here we assume that (fetch/push) remotes are identical
   return $ HM.fromList
     [ (T.strip nm, T.strip path)
@@ -229,8 +238,9 @@ gitRemotes = do
 -- | Check for uncommmited files in repository
 gitCheckUncommited :: IO (Report GitErr)
 gitCheckUncommited = do
-  r <- readProcess "git" ["status", "-s", "-uno"] ""
-  return Report{ warn = Uncommited <$> lines r
+  out <- readProcessStdout_ $ proc "git" ["status", "-s", "-uno"]
+  let output = TL.unpack $ TL.decodeUtf8With T.strictDecode out  
+  return Report{ warn = Uncommited <$> lines output
                , errs = []
                }
 
@@ -252,22 +262,38 @@ gitCheckRemotes repo = do
               }
 
 captureIOErr :: IO (Report GitErr) -> IO (Report GitErr)
-captureIOErr = handle $ \e ->
-  pure Report { warn = []
-              , errs = [IOErr e]
-              }
+captureIOErr = flip catches
+  [ Handler $ \e             -> pure $ Report [] [IOErr e]
+  , Handler $ \(e :: GitErr) -> pure $ Report [] [e]
+  ]
 
-runCommandVerbose
-  :: String -> [String] -> IO ()
+
+-- | Run command and hide its output
+runCommandSilent :: String -> [String] -> IO ()
+runCommandSilent cmd args = 
+  undefined
+
+  
+-- | Run command and write its output to terminal
+runCommandVerbose :: String -> [String] -> IO ()
 runCommandVerbose cmd args = do
   putStr "$ "
   putStr cmd
   forM_ args $ \a -> putStr (' ':show a)
   putStrLn ""
-  run' cmd args
+  run' cmd args 
 
-
-
+-- | Read git output
+readGitOutput :: [String] -> IO String
+readGitOutput args = do
+  (code,out,err) <- readProcess $ proc "git" args
+  case code of
+    ExitSuccess   -> pure $ decoder out
+    ExitFailure n -> throwIO $ GitErr
+                   $ ("Git exited with error code " ++ show n)
+                   : lines (decoder err)
+  where
+    decoder = TL.unpack . TL.decodeUtf8With T.strictDecode
 
 
 -- ----------------------------------------------------------------
@@ -309,7 +335,7 @@ runCommandVerbose cmd args = do
 
 run' :: String -> [String] -> IO ()
 run' exe args =
-  rawSystem exe args >>= \case
+  runProcess (proc exe args) >>= \case
     ExitSuccess   -> return ()
     ExitFailure i -> error ("ExitFailure: " ++ show i)
 
