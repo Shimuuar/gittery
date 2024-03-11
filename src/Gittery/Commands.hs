@@ -59,12 +59,19 @@ import Gittery.Types
 
 -- ----------------------------------------------------------------
 
--- data RepoErr
---   = IOErr   !IOException        -- ^ IO exception during processing repository
---   | RepoErr !Text               -- ^ Some error
---   | MissingRemote !Text
---   | BadRemote     !Text !Text !Text
---   deriving (Show)
+-- | Error that occured 
+data GitErr
+  = IOErr   !IOException
+    -- ^ IO exception during processing repository
+  | MissingRepository
+    -- ^ Repository is missing
+  | MissingRemote !Text !Text
+    -- ^ Remote is missing from repository
+  | BadRemote     !Text !Text !Text
+    -- ^ Remote has incorrect URL
+  | Uncommited FilePath
+    -- ^ Uncommited file
+  deriving (Show)
 
 data Report a = Report
   { warn :: [a]
@@ -87,7 +94,7 @@ reportHeader s = do
   putStr s
   putStrLn "  ===="
 
-report :: Map String (Report [Text]) -> IO ()
+report :: Map String (Report GitErr) -> IO ()
 report (Map.toList -> reps) =
   forM_ reps $ \(nm,r) -> do
     putStr nm >> putStr (replicate (n + 4 - length nm) ' ')
@@ -105,19 +112,30 @@ report (Map.toList -> reps) =
   where
     n = maximum $ map (length . fst) reps
     reportErr col errs = do
-      forM_ errs $ \case
+      forM_ errs $ \err -> case pprGitErr err of
         []     -> pure ()
         (s:ss) -> do
           putStr "  * "
           withColor col $ do
-            putStrLn $ T.unpack s
-            mapM_ (putStrLn . ("    " ++) . T.unpack) ss
+            putStrLn s
+            mapM_ (putStrLn . ("    " ++)) ss
     --
     withColor col action = do
       Term.setSGR [Term.SetColor Term.Foreground Term.Vivid col]
       action
       Term.setSGR [Term.Reset]
 
+pprGitErr :: GitErr -> [String]
+pprGitErr = \case
+  IOErr e -> ["IO exception: " <> show e]
+  MissingRepository -> ["Missing repository"]
+  MissingRemote nm url -> ["Missing remote " <> T.unpack nm <> ": " <> T.unpack url]
+  BadRemote nm e r ->
+    [ "Bad remote " <> T.unpack nm
+    , " expected: " <> T.unpack e
+    , " real:     " <> T.unpack r
+    ]
+  Uncommited nm -> ["Uncommited: " ++ nm]
 
 ----------------------------------------------------------------
 -- Checking repositories
@@ -126,11 +144,11 @@ report (Map.toList -> reps) =
 -- | Check group of repositories
 checkRepositories
   :: RepositoryGroup FilePath
-  -> IO (Map String (Report [Text]))
+  -> IO (Map String (Report GitErr))
 checkRepositories grp = flip Map.traverseWithKey grp.repos $ \k r -> do
   let dir = grp.host </> k
   doesDirectoryExist dir >>= \case
-    False -> pure Report{warn=[], errs=[["Missing repository"]]}
+    False -> pure Report{warn=[], errs=[MissingRepository]}
     True  -> checkRepository dir r
 --   forM_ (expectedRepos `HS.difference` realRepos) $ \nm -> do
 --     putStrLn $ "Missing repo: " ++ T.unpack nm
@@ -141,7 +159,7 @@ checkRepositories grp = flip Map.traverseWithKey grp.repos $ \k r -> do
 checkRepository
   :: FilePath   -- ^ Directory with a repo
   -> Repository -- ^ Repository description
-  -> IO (Report [Text])
+  -> IO (Report GitErr)
 checkRepository path repo = captureIOErr $ do
   setCurrentDirectory path
   gitCheckRemotes repo <> gitCheckUncommited
@@ -218,26 +236,22 @@ gitRemotes = do
     ]
 
 -- | Check for uncommmited files in repository
-gitCheckUncommited :: IO (Report [Text])
+gitCheckUncommited :: IO (Report GitErr)
 gitCheckUncommited = do
   r <- readProcess "git" ["status", "-s", "-uno"] ""
-  return Report{ warn = [ ["Uncommited: " <> T.pack l]
-                        | l <- lines r]
+  return Report{ warn = Uncommited <$> lines r
                , errs = []
                }
 
 -- | Check remotes of a repository in current working dir
-gitCheckRemotes :: Repository -> IO (Report [Text])
+gitCheckRemotes :: Repository -> IO (Report GitErr)
 gitCheckRemotes repo = do
   remotes <- gitRemotes
   let expected = repo.remote
-      missing  = [ ["Missing remote " <> nm <> ": " <> url]
+      missing  = [ MissingRemote nm url
                  | (nm,url) <- HM.toList $ HM.difference expected remotes
                  ]
-      wrong    = [ [ "Bad remote " <> nm
-                   , " expected: " <> e
-                   , " real:     " <> r
-                   ]
+      wrong    = [ BadRemote nm e r
                  | (nm, (e,r)) <- HM.toList
                                 $ HM.intersectionWith (,) expected remotes
                  , e /= r
@@ -246,10 +260,10 @@ gitCheckRemotes repo = do
               , errs = missing ++ wrong
               }
 
-captureIOErr :: IO (Report [Text]) -> IO (Report [Text])
-captureIOErr = handle $ \(e :: IOException) ->
+captureIOErr :: IO (Report GitErr) -> IO (Report GitErr)
+captureIOErr = handle $ \e ->
   pure Report { warn = []
-              , errs = [["IO exception: " <> T.pack (show e)]]
+              , errs = [IOErr e]
               }
 
 runCommandVerbose
