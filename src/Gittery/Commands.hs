@@ -22,26 +22,18 @@ module Gittery.Commands
 
 import Control.Exception
 import Control.Monad
-import Control.Monad.IO.Class
-import Control.Monad.Trans.Reader
-import Data.Char (isSpace)
--- import Data.List
+import Data.Char                (isSpace)
 import Data.Text                qualified as T
 import Data.Text.Lazy           qualified as TL
 import Data.Text                (Text)
 import Data.Text.Lazy.Encoding  qualified as TL
 import Data.Text.Encoding.Error qualified as T
 import Data.HashMap.Strict      qualified as HM
-import Data.HashSet             qualified as HS
 import Data.Map.Strict          qualified as Map
 import Data.Map.Strict          (Map)
-import Data.Foldable
-import Data.Traversable
 import System.Directory
 import System.FilePath
--- import System.Process
 import System.Process.Typed
-import System.Exit
 import System.Console.ANSI qualified as Term
 
 import Gittery.Types
@@ -102,7 +94,7 @@ report verbose (Map.toList -> reps) = forM_ reps $ \case
     reportErr Term.Yellow warn
     reportErr Term.Red    errs
   -- Normal repos
-  (nm, OK) | not verbose -> pure ()
+  (_ , OK) | not verbose -> pure ()
   (nm,r) -> do
     putStr nm >> putStr (replicate (n + 1 - length nm) ' ')
     case r of
@@ -181,10 +173,8 @@ checkRepository path repo = captureIOErr $ do
   gitCheckRemotes repo <> gitCheckUncommited
 
 -- | List know repositories
-lsRepo :: Map String (RepositoryGroup FilePath) -> IO ()
-lsRepo reposet = forM_ (Map.toList reposet) $ \(nm, repo) -> do
-  reportHeader (nm ++ " [" ++ repo.host ++ "]")
-  forM_ (Map.keys repo.repos) $ \k -> putStrLn ("  * " ++ k)
+lsRepo :: RepositoryGroup FilePath -> IO ()
+lsRepo repo = forM_ (Map.keys repo.repos) $ \k -> putStrLn ("  * " ++ k)
 
 -- | Set correct remotes for all repositories
 setRemotes :: RepositoryGroup FilePath
@@ -272,20 +262,17 @@ captureIOErr = flip catches
   ]
 
 
--- | Run command and hide its output
-runCommandSilent :: String -> [String] -> IO ()
-runCommandSilent cmd args =
-  undefined
-
-
 -- | Run command and write its output to terminal
 runCommandVerbose :: String -> [String] -> IO ()
 runCommandVerbose cmd args = do
   putStr "$ "
   putStr cmd
-  forM_ args $ \a -> putStr (' ':show a)
+  putStrLn $ concatMap (\a -> ' ':show a) args
   putStrLn ""
-  run' cmd args
+  runProcess (proc cmd args) >>= \case
+    ExitSuccess   -> return ()
+    ExitFailure i -> error ("ExitFailure: " ++ show i)
+
 
 -- | Read git output
 readGitOutput :: [String] -> IO String
@@ -336,12 +323,6 @@ readGitOutput args = do
 --   RemoteSimple r  -> case repoType of
 --     HG  -> [("default", r)]
 --     GIT -> [("origin",  r)]
-
-run' :: String -> [String] -> IO ()
-run' exe args =
-  runProcess (proc exe args) >>= \case
-    ExitSuccess   -> return ()
-    ExitFailure i -> error ("ExitFailure: " ++ show i)
 
 -- run :: String -> [String] -> ReaderT Ctx IO ()
 -- run exe args =
