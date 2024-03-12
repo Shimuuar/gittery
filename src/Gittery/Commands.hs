@@ -345,8 +345,8 @@ readGitOutput args = do
 -- | Check if two branches reference sme revision
 gitIsSameRevision :: String -> String -> IO Bool
 gitIsSameRevision ref1 ref2 = do
-  hash1 <- readGitOutput ["rev-parse", ref1]
-  hash2 <- readGitOutput ["rev-parse", ref2]
+  hash1 <- readGitOutput ["rev-parse", ref1, "--"]
+  hash2 <- readGitOutput ["rev-parse", ref2, "--"]
   return $! hash1 == hash2
 
 -- | Check if ref1 is ancestor of ref2
