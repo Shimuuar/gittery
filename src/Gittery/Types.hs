@@ -83,6 +83,7 @@ data RepositoryGroup a = RepositoryGroup
 data Repository = Repository
   { remote :: !(HashMap Text Text)
     -- ^ List of remotes for the repo
+  , branches :: ![Text]
   }
   deriving stock (Show, Eq)
 
@@ -101,6 +102,7 @@ instance FromJSON Repository where
     remote <- (o .: "remote") >>= \case
       String s -> pure $ HM.singleton "origin" s
       js       -> parseJSON js
+    branches <- o .:? "branches" .!= ["master"]
     pure Repository{..}
 
 instance FromJSON a => FromJSON (RepositoryGroup a) where

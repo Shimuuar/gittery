@@ -56,8 +56,10 @@ data GitErr
     -- ^ Remote is missing from repository
   | BadRemote     !Text !Text !Text
     -- ^ Remote has incorrect URL
-  | Uncommited FilePath
-    -- ^ Uncommited file
+  | Uncommited FilePath        -- ^ Uncommited file
+  | LocalBranchAhead  String String
+  | LocalBranchBehind String String
+  | BranchesDiverged  String String
   deriving stock (Show)
   deriving anyclass Exception
 
@@ -69,6 +71,9 @@ data Report a = Report
 
 pattern OK :: Report a
 pattern OK = Report [] []
+
+pattern Warn :: a -> Report a
+pattern Warn a = Report [a] []
 
 instance Semigroup (Report a) where
   a <> b = Report { warn = a.warn <> b.warn
@@ -124,10 +129,10 @@ report verbose (Map.toList -> reps) = forM_ reps $ \case
 
 pprGitErr :: GitErr -> [String]
 pprGitErr = \case
-  IOErr e -> ["IO exception: " <> show e]
-  GitErr e -> e
-  MissingRepository -> ["Missing repository"]
-  UnknownRepository r -> ["UnknownRepository " ++ show r]
+  IOErr  e             -> ["IO exception: " <> show e]
+  GitErr e             -> e
+  MissingRepository    -> ["Missing repository"]
+  UnknownRepository r  -> ["UnknownRepository " ++ show r]
   MissingRemote nm url -> ["Missing remote " <> T.unpack nm <> ": " <> T.unpack url]
   BadRemote nm e r ->
     [ "Bad remote " <> T.unpack nm
@@ -135,6 +140,9 @@ pprGitErr = \case
     , " real:     " <> T.unpack r
     ]
   Uncommited nm -> ["Uncommited: " ++ nm]
+  LocalBranchAhead  br remote -> ["Local branch '"<>br<> "' is ahead of '"<>remote<>"'"]
+  LocalBranchBehind br remote -> ["Local branch '"<>br<> "' is behind '"<>remote<>"'"]
+  BranchesDiverged  br remote -> ["Branches '"<>br<> "' and '"<>remote<>"' diverged"]
 
 ----------------------------------------------------------------
 -- Checking repositories
@@ -170,7 +178,10 @@ checkRepository
   -> IO (Report GitErr)
 checkRepository path repo = captureIOErr $ do
   setCurrentDirectory path
-  gitCheckRemotes repo <> gitCheckUncommited
+  mconcat [ gitCheckRemotes repo
+          , gitCheckUncommited
+          , gitCheckBranch repo
+          ]
 
 -- | List know repositories
 lsRepo :: RepositoryGroup FilePath -> IO ()
@@ -255,12 +266,27 @@ gitCheckRemotes repo = do
               , errs = missing ++ wrong
               }
 
+gitCheckBranch :: Repository -> IO (Report GitErr)
+gitCheckBranch repo = mconcat
+  [ do hash_local  <- readGitOutput ["rev-parse", br]
+       hash_remote <- readGitOutput ["rev-parse", remote_br]
+       case hash_local == hash_remote of
+         True  -> mempty
+         False -> br `gitIsAncestor` remote_br >>= \case
+           True  -> pure $ Warn $ LocalBranchBehind br remote_br
+           False -> remote_br `gitIsAncestor` br >>= \case
+             True  -> pure $ Warn $ LocalBranchAhead br remote_br
+             False -> pure $ Warn $ BranchesDiverged br remote_br
+  | br     <- T.unpack <$> repo.branches
+  , remote <- T.unpack <$> HM.keys repo.remote
+  , let remote_br = remote<>"/"<>br
+  ]
+
 captureIOErr :: IO (Report GitErr) -> IO (Report GitErr)
 captureIOErr = flip catches
   [ Handler $ \e             -> pure $ Report [] [IOErr e]
   , Handler $ \(e :: GitErr) -> pure $ Report [] [e]
   ]
-
 
 -- | Run command and write its output to terminal
 runCommandVerbose :: String -> [String] -> IO ()
@@ -287,6 +313,13 @@ readGitOutput args = do
   where
     decoder = TL.unpack . TL.decodeUtf8With T.strictDecode
 
+-- | Check if ref1 is ancestor of ref2
+gitIsAncestor :: String -> String -> IO Bool
+gitIsAncestor ref1 ref2 =
+  runProcess (proc "git" ["merge-base", "--is-ancestor", ref1, ref2]) >>= \case
+    ExitSuccess   -> pure True
+    ExitFailure 1 -> pure False
+    ExitFailure i -> error ("ExitFailure: " ++ show i)
 
 -- ----------------------------------------------------------------
 -- -- Utils
