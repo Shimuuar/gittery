@@ -88,33 +88,34 @@ instance Monoid (Report a) where
 reportHeader :: String -> IO ()
 reportHeader s = do
   Term.setSGR [ Term.SetColor Term.Foreground Term.Vivid Term.White
-              , Term.SetUnderlining Term.SingleUnderline
-              , Term.SetConsoleIntensity   Term.BoldIntensity
+              , Term.SetConsoleIntensity Term.BoldIntensity
               ]
   putStrLn $ "====  " ++ s ++ "  ===="
   Term.setSGR [ Term.Reset ]
 
-report :: Map String (Report GitErr) -> IO ()
-report (Map.toList -> reps) =
-  forM_ reps $ \(nm,r) -> do
-    case nm of
-      "" -> pure ()
-      _  -> putStr nm >> putStr (replicate (n + 4 - length nm) ' ')
+report :: Bool -> Map String (Report GitErr) -> IO ()
+report verbose (Map.toList -> reps) = forM_ reps $ \case
+  -- Empty string correponds to warnings correponding to groups.
+  -- And conveniently it comes first!
+  ("", OK)               -> pure ()
+  ("", Report warn errs) -> do
+    reportErr Term.Yellow warn
+    reportErr Term.Red    errs
+  -- Normal repos
+  (nm, OK) | not verbose -> pure ()
+  (nm,r) -> do
+    putStr nm >> putStr (replicate (n + 1 - length nm) ' ')
     case r of
-      Report [] []
-        | "" <- nm -> pure ()
-        | otherwise -> do
-            Term.setSGR [Term.SetColor Term.Foreground Term.Vivid Term.Green]
-            putStrLn "OK"
-            Term.setSGR [Term.Reset]
-      Report warn []   -> do
+      OK ->
+        withColor Term.Green $ putStrLn "OK"
+      Report warn [] -> do
         withColor Term.Yellow $ putStrLn "WARN"
         reportErr Term.Yellow warn
       Report _    errs -> do
         withColor Term.Red $ putStrLn "ERROR"
         reportErr Term.Red errs
   where
-    n = maximum $ map (length . fst) reps
+    n = max 24 $ maximum $ map (length . fst) reps
     reportErr col errs = do
       forM_ errs $ \err -> case pprGitErr err of
         []     -> pure ()

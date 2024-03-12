@@ -59,8 +59,13 @@ main = do
 parser :: Parser (Dict -> IO ())
 parser = subparser $ mconcat
   [ command "check" $ wrap "Check all repositories" $ do
+      verbose <- switch ( short 'v'
+                       <> long  "verbose"
+                       <> help  "Use verbose output"
+                        )
       flt <- parserFilterGrp
-      pure $ cmdCheck . flt
+      pure $ traverseGroupSet (report verbose <=< checkRepositories) . flt
+
   , command "fetch" $ wrap "Fetch for all repositories" $ do
       flt <- parserFilterGrp
       pure $ cmdFetch . flt
@@ -120,9 +125,6 @@ traverseGroupSet fun grps =
   forM_ (Map.toList grps) $ \(nm,grp) -> do
     reportHeader (nm ++ " [" ++ grp.host ++ "]")
     fun grp
-
-cmdCheck :: Dict -> IO ()
-cmdCheck = traverseGroupSet (report <=< checkRepositories)
 
 cmdFetch :: Dict -> IO ()
 cmdFetch = traverseGroupSet fetchRepo
