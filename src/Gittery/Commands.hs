@@ -224,10 +224,9 @@ cloneRepo = traverseMissingRepo_ $ \dir nm repo -> do
   forM_ (HM.toList repo.remote) $ \(r,url) -> do
     runCommandVerbose "git" ["remote", "add", T.unpack r, T.unpack url]
     runCommandVerbose "git" ["fetch", T.unpack r]
-  -- Set default branch
-  case repo.branches of
-    br:_ -> runCommandVerbose "git" ["checkout", T.unpack br]
-    []   -> pure ()
+  -- Set up branches
+  forM_ (reverse repo.branches) $ \br ->
+    runCommandVerbose "git" ["checkout", T.unpack br]
 
 
 -- | Fetch from each remote
