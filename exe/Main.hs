@@ -56,36 +56,26 @@ main = do
 --     existingKeys = Set.fromList $ map fst xs
 --     unknownKeys  = keySet `Set.difference` existingKeys
 
-parser :: Parser (Map String (RepositoryGroup FilePath) -> IO ())
+parser :: Parser (Dict -> IO ())
 parser = subparser $ mconcat
-  [ command "check" $ wrap "Check all repositories"     $ do
-      -- keys <- keyParser
-      -- pure (checkRepositories . filterArguments keys)
-      pure $ \grps -> forM_ (Map.toList grps) $ \(nm,grp) -> do
-        reportHeader nm
-        report =<< checkRepositories grp
+  [ command "check" $ wrap "Check all repositories" $ do
+      flt <- parserFilterGrp
+      pure $ cmdCheck . flt
   , command "fetch" $ wrap "Fetch for all repositories" $ do
-      pure $ \grps -> forM_ (Map.toList grps) $ \(nm,grp) -> do
-        reportHeader nm
-        fetchRepo grp
---       ctxRepoParams <- ignoreParser
---       ctxDryRun     <- dryRunParser
---       keys          <- keyParser
---       pure $ flip runReaderT Ctx{..} . fetchRepo . filterArguments keys
+      flt <- parserFilterGrp
+      pure $ cmdFetch . flt
 --   , command "push" $ wrap "Try to push all changes to repository" $ do
 --       ctxRepoParams <- ignoreParser
 --       ctxDryRun     <- dryRunParser
 --       keys          <- keyParser
 --       pure $ flip runReaderT Ctx{..} . pushRepo . filterArguments keys
   , command "init" $ wrap "Create all missing repositories" $ do
-      pure $ \grps -> forM_ (Map.toList grps) $ \(nm,grp) -> do
-        reportHeader nm
-        cloneRepo grp
+      flt <- parserFilterGrp
+      pure $ cmdInit . flt
   , command "set-remote" $ wrap "Set all remotes to values from config" $ do
-      pure $ \grps -> forM_ (Map.toList grps) $ \(nm,grp) -> do
-        reportHeader nm
-        setRemotes grp
-  , command "ls"   $ wrap "List all repository groups"      $ pure lsRepo
+      flt <- parserFilterGrp
+      pure $ cmdSetRemote . flt
+  , command "ls" $ wrap "List all repository groups" $ pure lsRepo
   ]
   where
     wrap hlp p   = (helper <*> p) `info` progDesc hlp
@@ -107,3 +97,38 @@ parser = subparser $ mconcat
 --     keyParser =  many $ strArgument ( help    "Repo trees to check"
 --                                    <> metavar "TREE"
                                     -- )
+
+
+type Dict = Map String (RepositoryGroup FilePath)
+
+parserFilterGrp :: Parser (Dict -> Dict)
+parserFilterGrp = do
+  keys <- many $ strArgument ( help "group name"
+                            <> metavar "GRP")
+  pure $ case keys of
+    [] -> id
+    _  -> \m -> Map.restrictKeys m (Set.fromList keys)
+
+----------------------------------------------------------------
+-- Command implementation
+----------------------------------------------------------------
+
+traverseGroupSet
+  :: (RepositoryGroup FilePath -> IO ())
+  -> (Dict                     -> IO ())
+traverseGroupSet fun grps =
+  forM_ (Map.toList grps) $ \(nm,grp) -> do
+    reportHeader (nm ++ " [" ++ grp.host ++ "]")
+    fun grp
+
+cmdCheck :: Dict -> IO ()
+cmdCheck = traverseGroupSet (report <=< checkRepositories)
+
+cmdFetch :: Dict -> IO ()
+cmdFetch = traverseGroupSet fetchRepo
+
+cmdInit :: Dict -> IO ()
+cmdInit = traverseGroupSet cloneRepo
+
+cmdSetRemote :: Dict -> IO ()
+cmdSetRemote = traverseGroupSet setRemotes

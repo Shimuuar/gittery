@@ -87,9 +87,12 @@ instance Monoid (Report a) where
 
 reportHeader :: String -> IO ()
 reportHeader s = do
-  putStr "====  "
-  putStr s
-  putStrLn "  ===="
+  Term.setSGR [ Term.SetColor Term.Foreground Term.Vivid Term.White
+              , Term.SetUnderlining Term.SingleUnderline
+              , Term.SetConsoleIntensity   Term.BoldIntensity
+              ]
+  putStrLn $ "====  " ++ s ++ "  ===="
+  Term.setSGR [ Term.Reset ]
 
 report :: Map String (Report GitErr) -> IO ()
 report (Map.toList -> reps) =
@@ -239,7 +242,7 @@ gitRemotes = do
 gitCheckUncommited :: IO (Report GitErr)
 gitCheckUncommited = do
   out <- readProcessStdout_ $ proc "git" ["status", "-s", "-uno"]
-  let output = TL.unpack $ TL.decodeUtf8With T.strictDecode out  
+  let output = TL.unpack $ TL.decodeUtf8With T.strictDecode out
   return Report{ warn = Uncommited <$> lines output
                , errs = []
                }
@@ -270,10 +273,10 @@ captureIOErr = flip catches
 
 -- | Run command and hide its output
 runCommandSilent :: String -> [String] -> IO ()
-runCommandSilent cmd args = 
+runCommandSilent cmd args =
   undefined
 
-  
+
 -- | Run command and write its output to terminal
 runCommandVerbose :: String -> [String] -> IO ()
 runCommandVerbose cmd args = do
@@ -281,7 +284,7 @@ runCommandVerbose cmd args = do
   putStr cmd
   forM_ args $ \a -> putStr (' ':show a)
   putStrLn ""
-  run' cmd args 
+  run' cmd args
 
 -- | Read git output
 readGitOutput :: [String] -> IO String
