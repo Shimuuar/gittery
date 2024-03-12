@@ -16,7 +16,8 @@ module Gittery.Commands
   , lsRepo
   , setRemotes
   , fetchRepo
-  -- , pushRepo
+  , mergeFF
+  , pushRepo
   , cloneRepo
   ) where
 
@@ -74,6 +75,9 @@ pattern OK = Report [] []
 
 pattern Warn :: a -> Report a
 pattern Warn a = Report [a] []
+
+pattern Warns :: [a] -> Report a
+pattern Warns a = Report a []
 
 instance Semigroup (Report a) where
   a <> b = Report { warn = a.warn <> b.warn
@@ -224,6 +228,38 @@ fetchRepo = traverseExistingRepo_ $ \nm repo -> do
   forM_ (HM.toList repo.remote) $ \(r,_url) -> do
     runCommandVerbose "git" ["fetch", T.unpack r]
 
+-- | Attempt to use ff merge
+mergeFF :: RepositoryGroup FilePath -> IO ()
+mergeFF = traverseExistingRepo_ $ \nm repo -> do
+  putStrLn $ "  * " ++ nm
+  gitUncommited >>= \case
+    (_:_) -> pure () -- Skip if there're uncommmited changes
+    []    -> do
+      active_br <- gitCurrentBranch
+      forM_ (T.unpack <$> repo.branches) $ \br ->
+        forM_ (T.unpack <$> HM.keys repo.remote) $ \remote -> do
+          let remote_br = remote<>"/"<>br
+          gitIsSameRevision br remote_br >>= \case
+            True  -> pure ()
+            False -> br `gitIsAncestor` remote_br >>= \case
+              False -> pure ()
+              True
+                | br == active_br -> runCommandVerbose "git" ["merge", "--ff-only", remote_br]
+                | otherwise       -> runCommandVerbose "git" ["fetch", remote, br++":"++br]
+
+pushRepo :: RepositoryGroup FilePath -> IO ()
+pushRepo = traverseExistingRepo_ $ \nm repo -> case repo.can_push of
+  []   -> pure ()
+  push -> do
+    putStrLn $ "  * " ++ nm
+    forM_ (T.unpack <$> push) $ \br ->
+      forM_ (T.unpack <$> HM.keys repo.remote) $ \remote -> do
+        let remote_br = remote<>"/"<>br
+        gitIsSameRevision br remote_br >>= \case
+          True  -> pure ()
+          False -> remote_br `gitIsAncestor` br >>= \case
+            False -> pure ()
+            True  -> runCommandVerbose "git" ["push", remote, br]
 
 ----------------------------------------------------------------
 -- Git interactions
@@ -242,12 +278,7 @@ gitRemotes = do
 
 -- | Check for uncommmited files in repository
 gitCheckUncommited :: IO (Report GitErr)
-gitCheckUncommited = do
-  out <- readProcessStdout_ $ proc "git" ["status", "-s", "-uno"]
-  let output = TL.unpack $ TL.decodeUtf8With T.strictDecode out
-  return Report{ warn = Uncommited <$> lines output
-               , errs = []
-               }
+gitCheckUncommited = Warns . fmap Uncommited <$> gitUncommited
 
 -- | Check remotes of a repository in current working dir
 gitCheckRemotes :: Repository -> IO (Report GitErr)
@@ -268,15 +299,13 @@ gitCheckRemotes repo = do
 
 gitCheckBranch :: Repository -> IO (Report GitErr)
 gitCheckBranch repo = mconcat
-  [ do hash_local  <- readGitOutput ["rev-parse", br]
-       hash_remote <- readGitOutput ["rev-parse", remote_br]
-       case hash_local == hash_remote of
-         True  -> mempty
-         False -> br `gitIsAncestor` remote_br >>= \case
-           True  -> pure $ Warn $ LocalBranchBehind br remote_br
-           False -> remote_br `gitIsAncestor` br >>= \case
-             True  -> pure $ Warn $ LocalBranchAhead br remote_br
-             False -> pure $ Warn $ BranchesDiverged br remote_br
+  [ gitIsSameRevision br remote_br >>= \case
+      True  -> mempty
+      False -> br `gitIsAncestor` remote_br >>= \case
+        True  -> pure $ Warn $ LocalBranchBehind br remote_br
+        False -> remote_br `gitIsAncestor` br >>= \case
+          True  -> pure $ Warn $ LocalBranchAhead br remote_br
+          False -> pure $ Warn $ BranchesDiverged br remote_br
   | br     <- T.unpack <$> repo.branches
   , remote <- T.unpack <$> HM.keys repo.remote
   , let remote_br = remote<>"/"<>br
@@ -313,6 +342,13 @@ readGitOutput args = do
   where
     decoder = TL.unpack . TL.decodeUtf8With T.strictDecode
 
+-- | Check if two branches reference sme revision
+gitIsSameRevision :: String -> String -> IO Bool
+gitIsSameRevision ref1 ref2 = do
+  hash1 <- readGitOutput ["rev-parse", ref1]
+  hash2 <- readGitOutput ["rev-parse", ref2]
+  return $! hash1 == hash2
+
 -- | Check if ref1 is ancestor of ref2
 gitIsAncestor :: String -> String -> IO Bool
 gitIsAncestor ref1 ref2 =
@@ -320,6 +356,15 @@ gitIsAncestor ref1 ref2 =
     ExitSuccess   -> pure True
     ExitFailure 1 -> pure False
     ExitFailure i -> error ("ExitFailure: " ++ show i)
+
+-- | List uncommited changes ignoring untracked files
+gitUncommited :: IO [String]
+gitUncommited = lines <$> readGitOutput ["status", "-s", "-uno"]
+
+gitCurrentBranch :: IO String
+gitCurrentBranch
+  =  reverse . dropWhile (\c -> c=='\n' || c=='\r') . reverse
+ <$> readGitOutput ["rev-parse", "--abbrev-ref", "HEAD"]
 
 -- ----------------------------------------------------------------
 -- -- Utils

@@ -49,11 +49,12 @@ parser = subparser $ mconcat
   , command "fetch" $ wrap "Fetch for all repositories" $ do
       flt <- parserFilterGrp
       pure $ traverseGroupSet fetchRepo . flt
---   , command "push" $ wrap "Try to push all changes to repository" $ do
---       ctxRepoParams <- ignoreParser
---       ctxDryRun     <- dryRunParser
---       keys          <- keyParser
---       pure $ flip runReaderT Ctx{..} . pushRepo . filterArguments keys
+  , command "ff" $ wrap "Try to use ff merge from remote" $ do
+      flt <- parserFilterGrp
+      pure $ traverseGroupSet mergeFF . flt
+  , command "push" $ wrap "Try to push all changes to repository" $ do
+      flt <- parserFilterGrp
+      pure $ traverseGroupSet pushRepo . flt
   , command "init" $ wrap "Create all missing repositories" $ do
       flt <- parserFilterGrp
       pure $ traverseGroupSet cloneRepo . flt

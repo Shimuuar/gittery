@@ -20,6 +20,8 @@ import Data.HashMap.Strict qualified as HM
 import Data.Map.Strict     (Map)
 import Data.Map.Strict     qualified as Map
 import Data.Text           (Text)
+import Data.Foldable
+import Data.Functor
 import Data.Traversable
 import Data.Yaml           qualified as YAML
 import System.Directory
@@ -84,6 +86,9 @@ data Repository = Repository
   { remote :: !(HashMap Text Text)
     -- ^ List of remotes for the repo
   , branches :: ![Text]
+    -- ^ List of branches we track
+  , can_push :: ![Text]
+    -- ^ List of branches we're allowed to push
   }
   deriving stock (Show, Eq)
 
@@ -103,6 +108,17 @@ instance FromJSON Repository where
       String s -> pure $ HM.singleton "origin" s
       js       -> parseJSON js
     branches <- o .:? "branches" .!= ["master"]
+    can_push <- (o .:? "can_push") >>= \case
+      Nothing -> pure []
+      Just js -> asum
+        [ parseJSON js <&> \case
+            True  -> branches
+            False -> []
+        , do xs <- parseJSON js
+             forM_ xs $ \x -> unless (x `elem` branches)
+               $ fail "Unknown push branch"
+             pure xs
+        ]
     pure Repository{..}
 
 instance FromJSON a => FromJSON (RepositoryGroup a) where
