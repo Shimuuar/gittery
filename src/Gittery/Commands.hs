@@ -182,10 +182,13 @@ checkRepository
   -> IO (Report GitErr)
 checkRepository path repo = captureIOErr $ do
   setCurrentDirectory path
-  mconcat [ gitCheckRemotes repo
-          , gitCheckUncommited
-          , gitCheckBranch repo
-          ]
+  -- We want to capture each error separately in order to avoid single
+  -- exception clobbering all checks
+  mconcat
+    [ captureIOErr $ gitCheckRemotes repo
+    , captureIOErr $ gitCheckUncommited
+    , captureIOErr $ gitCheckBranch repo
+    ]
 
 -- | List know repositories
 lsRepo :: RepositoryGroup FilePath -> IO ()
