@@ -265,14 +265,15 @@ captureIOErr = flip catches
 -- | Run command and write its output to terminal
 runCommandVerbose :: String -> [String] -> IO ()
 runCommandVerbose cmd args = do
-  putStr "$ "
-  putStr cmd
-  putStrLn $ concatMap (\a -> ' ':show a) args
-  putStrLn ""
+  putStrLn $ "$ " <> cmd <> concatMap (\a -> ' ':escape a) args
   runProcess (proc cmd args) >>= \case
     ExitSuccess   -> return ()
     ExitFailure i -> error ("ExitFailure: " ++ show i)
-
+  where
+    -- Naive string excaping
+    escape s | any special s = show s
+             | otherwise     = s
+    special c = isSpace c || c == '!' || c == '$' || c == '#'
 
 -- | Read git output
 readGitOutput :: [String] -> IO String
