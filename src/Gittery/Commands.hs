@@ -1,9 +1,5 @@
-{-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns        #-}
 -- |
 module Gittery.Commands
@@ -25,10 +21,7 @@ import Control.Exception
 import Control.Monad
 import Data.Char                (isSpace)
 import Data.Text                qualified as T
-import Data.Text.Lazy           qualified as TL
 import Data.Text                (Text)
-import Data.Text.Lazy.Encoding  qualified as TL
-import Data.Text.Encoding.Error qualified as T
 import Data.HashMap.Strict      qualified as HM
 import Data.Map.Strict          qualified as Map
 import Data.Map.Strict          (Map)
@@ -38,6 +31,7 @@ import System.Process.Typed
 import System.Console.ANSI qualified as Term
 
 import Gittery.Types
+import Gittery.Git
 
 ----------------------------------------------------------------
 -- Reports
@@ -45,24 +39,17 @@ import Gittery.Types
 
 -- | Error that occured
 data GitErr
-  = IOErr   !IOException
-    -- ^ IO exception during processing repository
-  | GitErr  [String]
-    -- ^ Git error
-  | MissingRepository
-    -- ^ Repository is missing
-  | UnknownRepository FilePath
-    -- ^ There's exists repository not listed it config
-  | MissingRemote !Text !Text
-    -- ^ Remote is missing from repository
-  | BadRemote     !Text !Text !Text
-    -- ^ Remote has incorrect URL
-  | Uncommited FilePath        -- ^ Uncommited file
+  = IOErr   !IOException            -- ^ IO exception during processing repository
+  | GitErr  [String]                -- ^ Git error
+  | MissingRepository               -- ^ Repository is missing
+  | UnknownRepository FilePath      -- ^ There's exists repository not listed it config
+  | MissingRemote !Text !Text       -- ^ Remote is missing from repository
+  | BadRemote     !Text !Text !Text -- ^ Remote has incorrect URL
+  | Uncommited FilePath
   | LocalBranchAhead  String String
   | LocalBranchBehind String String
   | BranchesDiverged  String String
   deriving stock (Show)
-  deriving anyclass Exception
 
 data Report a = Report
   { warn :: [a]
@@ -78,6 +65,9 @@ pattern Warn a = Report [a] []
 
 pattern Warns :: [a] -> Report a
 pattern Warns a = Report a []
+
+pattern Err :: a -> Report a
+pattern Err a = Report [] [a]
 
 instance Semigroup (Report a) where
   a <> b = Report { warn = a.warn <> b.warn
@@ -185,10 +175,51 @@ checkRepository path repo = captureIOErr $ do
   -- We want to capture each error separately in order to avoid single
   -- exception clobbering all checks
   mconcat
-    [ captureIOErr $ gitCheckRemotes repo
-    , captureIOErr $ gitCheckUncommited
-    , captureIOErr $ gitCheckBranch repo
+    [ captureIOErr $ checkRemotes repo
+    , captureIOErr $ checkUncommited
+    , captureIOErr $ checkBranch repo
     ]
+
+
+-- | Check for uncommmited files in repository
+checkUncommited :: IO (Report GitErr)
+checkUncommited = Warns . fmap Uncommited <$> gitUncommited
+
+-- | Check remotes of a repository in current working dir
+checkRemotes :: Repository -> IO (Report GitErr)
+checkRemotes repo = do
+  remotes <- gitRemotes
+  let expected = repo.remote
+      missing  = [ MissingRemote nm url
+                 | (nm,url) <- HM.toList $ HM.difference expected remotes
+                 ]
+      wrong    = [ BadRemote nm e r
+                 | (nm, (e,r)) <- HM.toList
+                                $ HM.intersectionWith (,) expected remotes
+                 , e /= r
+                 ]
+  pure Report { warn = []
+              , errs = missing ++ wrong
+              }
+
+-- | Check that local and remote branches match
+checkBranch :: Repository -> IO (Report GitErr)
+checkBranch repo = mconcat
+  [ gitIsSameRevision br remote_br >>= \case
+      True  -> mempty
+      False -> br `gitIsAncestor` remote_br >>= \case
+        True  -> pure $ Warn $ LocalBranchBehind br remote_br
+        False -> remote_br `gitIsAncestor` br >>= \case
+          True  -> pure $ Warn $ LocalBranchAhead br remote_br
+          False -> pure $ Warn $ BranchesDiverged br remote_br
+  | br     <- T.unpack <$> repo.branches
+  , remote <- T.unpack <$> HM.keys repo.remote
+  , let remote_br = remote<>"/"<>br
+  ]
+
+----------------------------------------------------------------
+-- Other commands
+----------------------------------------------------------------
 
 -- | List know repositories
 lsRepo :: RepositoryGroup FilePath -> IO ()
@@ -274,56 +305,10 @@ pushRepo = traverseExistingRepo_ $ \nm repo -> case repo.can_push of
 -- Git interactions
 ----------------------------------------------------------------
 
-gitRemotes :: IO (HM.HashMap Text Text)
-gitRemotes = do
-  output <- readGitOutput ["remote", "--verbose"]
-  -- NOTE: Here we assume that (fetch/push) remotes are identical
-  return $ HM.fromList
-    [ (T.strip nm, T.strip path)
-    | line       <- T.strip . T.pack <$> lines output
-    , Just clear <- [T.stripSuffix "(fetch)" line]
-    , let (nm,path) = T.span (not . isSpace) clear
-    ]
-
--- | Check for uncommmited files in repository
-gitCheckUncommited :: IO (Report GitErr)
-gitCheckUncommited = Warns . fmap Uncommited <$> gitUncommited
-
--- | Check remotes of a repository in current working dir
-gitCheckRemotes :: Repository -> IO (Report GitErr)
-gitCheckRemotes repo = do
-  remotes <- gitRemotes
-  let expected = repo.remote
-      missing  = [ MissingRemote nm url
-                 | (nm,url) <- HM.toList $ HM.difference expected remotes
-                 ]
-      wrong    = [ BadRemote nm e r
-                 | (nm, (e,r)) <- HM.toList
-                                $ HM.intersectionWith (,) expected remotes
-                 , e /= r
-                 ]
-  pure Report { warn = []
-              , errs = missing ++ wrong
-              }
-
-gitCheckBranch :: Repository -> IO (Report GitErr)
-gitCheckBranch repo = mconcat
-  [ gitIsSameRevision br remote_br >>= \case
-      True  -> mempty
-      False -> br `gitIsAncestor` remote_br >>= \case
-        True  -> pure $ Warn $ LocalBranchBehind br remote_br
-        False -> remote_br `gitIsAncestor` br >>= \case
-          True  -> pure $ Warn $ LocalBranchAhead br remote_br
-          False -> pure $ Warn $ BranchesDiverged br remote_br
-  | br     <- T.unpack <$> repo.branches
-  , remote <- T.unpack <$> HM.keys repo.remote
-  , let remote_br = remote<>"/"<>br
-  ]
-
 captureIOErr :: IO (Report GitErr) -> IO (Report GitErr)
 captureIOErr = flip catches
-  [ Handler $ \e             -> pure $ Report [] [IOErr e]
-  , Handler $ \(e :: GitErr) -> pure $ Report [] [e]
+  [ Handler $ \e                -> pure $ Report [] [IOErr e]
+  , Handler $ \(GitException e) -> pure $ Err (GitErr e)
   ]
 
 -- | Run command and write its output to terminal
@@ -339,41 +324,7 @@ runCommandVerbose cmd args = do
              | otherwise     = s
     special c = isSpace c || c == '!' || c == '$' || c == '#'
 
--- | Read git output
-readGitOutput :: [String] -> IO String
-readGitOutput args = do
-  (code,out,err) <- readProcess $ proc "git" args
-  case code of
-    ExitSuccess   -> pure $ decoder out
-    ExitFailure n -> throwIO $ GitErr
-                   $ ("Git exited with error code " ++ show n)
-                   : lines (decoder err)
-  where
-    decoder = TL.unpack . TL.decodeUtf8With T.strictDecode
 
--- | Check if two branches reference sme revision
-gitIsSameRevision :: String -> String -> IO Bool
-gitIsSameRevision ref1 ref2 = do
-  hash1 <- readGitOutput ["rev-parse", ref1, "--"]
-  hash2 <- readGitOutput ["rev-parse", ref2, "--"]
-  return $! hash1 == hash2
-
--- | Check if ref1 is ancestor of ref2
-gitIsAncestor :: String -> String -> IO Bool
-gitIsAncestor ref1 ref2 =
-  runProcess (proc "git" ["merge-base", "--is-ancestor", ref1, ref2]) >>= \case
-    ExitSuccess   -> pure True
-    ExitFailure 1 -> pure False
-    ExitFailure i -> error ("ExitFailure: " ++ show i)
-
--- | List uncommited changes ignoring untracked files
-gitUncommited :: IO [String]
-gitUncommited = lines <$> readGitOutput ["status", "-s", "-uno"]
-
-gitCurrentBranch :: IO String
-gitCurrentBranch
-  =  reverse . dropWhile (\c -> c=='\n' || c=='\r') . reverse
- <$> readGitOutput ["rev-parse", "--abbrev-ref", "HEAD"]
 
 
 

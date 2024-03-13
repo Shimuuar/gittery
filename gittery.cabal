@@ -18,7 +18,10 @@ Executable gittery
   Default-Extensions:
         NoPolyKinds
         DerivingStrategies
+        DeriveAnyClass
+        LambdaCase
         OverloadedRecordDot
+        PatternSynonyms
         DuplicateRecordFields
         NoFieldSelectors
         LambdaCase
@@ -40,3 +43,4 @@ Executable gittery
   Other-modules:
                 Gittery.Types
                 Gittery.Commands
+                Gittery.Git
