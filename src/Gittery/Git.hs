@@ -11,6 +11,7 @@ module Gittery.Git
   , gitRemotes
   , gitCurrentBranch
   , gitUncommited
+  , gitUncommitedUntracked
   ) where
 
 import Control.Exception
@@ -88,3 +89,7 @@ gitRemotes = do
 -- | List uncommited changes ignoring untracked files
 gitUncommited :: IO [String]
 gitUncommited = lines <$> readGitOutput ["status", "-s", "-uno"]
+
+-- | List uncommited changes with untracked files
+gitUncommitedUntracked :: IO [String]
+gitUncommitedUntracked = lines <$> readGitOutput ["status", "-s"]

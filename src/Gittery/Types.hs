@@ -91,6 +91,8 @@ data Repository = Repository
     -- ^ List of branches we track
   , can_push :: ![Text]
     -- ^ List of branches we're allowed to push
+  , no_untracked :: !Bool
+    -- ^ Prohibit untracked files in repository
   }
   deriving stock (Show, Eq)
 
@@ -121,6 +123,7 @@ instance FromJSON Repository where
                $ fail "Unknown push branch"
              pure xs
         ]
+    no_untracked <- o .:? "no_untracked" .!= False
     pure Repository{..}
 
 instance FromJSON a => FromJSON (RepositoryGroup a) where

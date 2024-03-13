@@ -177,14 +177,16 @@ checkRepository path repo = captureIOErr $ do
   -- exception clobbering all checks
   mconcat
     [ captureIOErr $ checkRemotes repo
-    , captureIOErr $ checkUncommited
+    , captureIOErr $ checkUncommited repo
     , captureIOErr $ checkBranch repo
     ]
 
 
 -- | Check for uncommmited files in repository
-checkUncommited :: IO (Report GitErr)
-checkUncommited = Warns . fmap Uncommited <$> gitUncommited
+checkUncommited :: Repository -> IO (Report GitErr)
+checkUncommited repo = Warns . fmap Uncommited <$> case repo.no_untracked of
+  True  -> gitUncommitedUntracked
+  False -> gitUncommited
 
 -- | Check remotes of a repository in current working dir
 checkRemotes :: Repository -> IO (Report GitErr)
