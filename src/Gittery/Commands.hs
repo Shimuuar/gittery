@@ -81,7 +81,7 @@ reportHeader s = do
   Term.setSGR [ Term.SetColor Term.Foreground Term.Vivid Term.White
               , Term.SetConsoleIntensity Term.BoldIntensity
               ]
-  putStrLn $ "====  " ++ s ++ "  ===="
+  putStrLn $ "====  " ++ s ++ "  " ++ replicate (60 - 8 - length s) '='
   Term.setSGR [ Term.Reset ]
 
 report :: Bool -> Map String (Report GitErr) -> IO ()
