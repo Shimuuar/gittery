@@ -60,7 +60,9 @@ toLocalConfig hm = do
     $ Map.traverseWithKey (\k -> traverse (convert hostname k)) hm
   where
     convert hostname k (HostInfo m) = case HM.lookup hostname m of
-      Nothing -> do putStrLn $ "No host entry in file: " ++ k
+      Nothing -> do putStrLn $ "ERROR:"
+                    putStrLn $ "  No host entry for " ++ hostname ++ " in file " ++ k
+                    putStrLn $ "  Use null to skip"
                     exitFailure
       Just x  -> pure x
       
