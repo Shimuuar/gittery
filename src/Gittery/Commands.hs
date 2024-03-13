@@ -260,7 +260,8 @@ cloneRepo = traverseMissingRepo_ $ \dir nm repo -> do
     runCommandVerbose "git" ["fetch", T.unpack r]
   -- Set up branches
   forM_ (reverse repo.branches) $ \br ->
-    runCommandVerbose "git" ["checkout", T.unpack br]
+    forM_ (take 1 $ HM.keys repo.remote) $ \r ->
+      runCommandVerbose "git" ["checkout", "--track", T.unpack r ++ "/" ++ T.unpack br]
 
 
 -- | Fetch from each remote
