@@ -144,4 +144,4 @@ validPath []     = False
 validPath (s0:s) = ok1 s0 && all ok s
   where
     ok1 c = isAscii c && isAlphaNum c
-    ok  c = isAscii c && (isAlphaNum c || c == '-' || c == '_')
+    ok  c = isAscii c && (isAlphaNum c || (c `elem` ("-_."::String)))
