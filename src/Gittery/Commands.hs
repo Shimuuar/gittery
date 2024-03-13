@@ -375,56 +375,6 @@ gitCurrentBranch
   =  reverse . dropWhile (\c -> c=='\n' || c=='\r') . reverse
  <$> readGitOutput ["rev-parse", "--abbrev-ref", "HEAD"]
 
--- ----------------------------------------------------------------
--- -- Utils
--- ----------------------------------------------------------------
-
--- foreachRemote
---   :: (RepoType -> (Text,Text) -> ReaderT Ctx IO ())
---      -- ^ Action for each remote
---   -> [(FilePath, RepositoryTree FilePath)]
---      -- ^ List of repositories
---   -> ReaderT Ctx IO ()
--- foreachRemote action = mapM_ $ \(treeName, RepositoryTree{..}) -> do
---   params <- asks ctxRepoParams
---   liftIO $ putStrLn ("==== " ++ treeName)
---   --
---   forM_ (HM.toList treeRepos) $ \(nm, repo@Repository{..}) -> do
---     liftIO $ putStrLn ("* " ++ T.unpack nm)
---     liftIO $ setCurrentDirectory $ treeLocation </> T.unpack nm
---     mapM_ (action repoType)
---       $ filter (acceptRemote params)
---       $ remoteList repo
-
-
--- acceptRemote :: [RepoParams] -> (Text,Text) -> Bool
--- acceptRemote params (remote,url)
---   = all (not . reject) params
---   where
---     reject (IgnoreRemoteName   nm)   = nm == remote
---     reject (IgnoreRemotePrefix prfx) = prfx `T.isPrefixOf` url
---     reject (IgnoreRemoteInfix  infx) = infx `T.isInfixOf`  url
-
--- remoteList :: Repository -> [(Text,Text)]
--- remoteList Repository{..} = case remote of
---   RemoteMany   rs -> HM.toList rs
---   RemoteSimple r  -> case repoType of
---     HG  -> [("default", r)]
---     GIT -> [("origin",  r)]
-
--- run :: String -> [String] -> ReaderT Ctx IO ()
--- run exe args =
---   asks ctxDryRun >>= \case
---     True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
---     False -> liftIO (rawSystem exe args) >>= \case
---       ExitSuccess   -> return ()
---       ExitFailure i -> error ("ExitFailure: " ++ show i)
-
--- runStdout :: String -> [String] -> (String -> ReaderT Ctx IO ()) -> ReaderT Ctx IO ()
--- runStdout exe args cont =
---   asks ctxDryRun >>= \case
---     True  -> liftIO $ putStrLn $ "    " ++ unwords (exe : args)
---     False -> cont =<< liftIO (readProcess exe args "")
 
 
 ----------------------------------------------------------------
