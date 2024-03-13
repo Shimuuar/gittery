@@ -159,6 +159,7 @@ checkRepositories grp = mconcat
               { warn = [ UnknownRepository nm
                        | nm <- dirs
                        , nm `Map.notMember` grp.repos
+                       , not $ nm `elem` grp.ignore_paths
                        ]
               , errs = []
               }

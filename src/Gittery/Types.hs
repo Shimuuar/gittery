@@ -78,6 +78,8 @@ data RepositoryGroup a = RepositoryGroup
   , no_unknown :: !Bool
     -- ^ Whether we should check that directory doesn not contains
     --   unknown repos
+  , ignore_paths :: [FilePath]
+    -- ^ List of paths to ignore when doing
   }
   deriving stock (Show, Eq, Functor, Foldable, Traversable)
 
@@ -124,11 +126,13 @@ instance FromJSON Repository where
 instance FromJSON a => FromJSON (RepositoryGroup a) where
   parseJSON = withObject "" $ \o -> do
     ("directory"::Text) <- o .: "type"
-    host  <- o .: "host"
-    repos <- o .: "repos"
-    no_unknown <- o .:? "no_unknown" .!= False
+    host         <- o .: "host"
+    repos        <- o .: "repos"
+    no_unknown   <- o .:? "no_unknown" .!= False
+    ignore_paths <- o .:? "ignore_paths" .!= []
+    -- Extra validation
     unless (all validPath (Map.keys repos)) $
-      fail "Invalid repository name"    
+      fail "Invalid repository name"
     pure RepositoryGroup{..}
     
 
