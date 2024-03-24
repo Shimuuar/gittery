@@ -84,6 +84,14 @@ reportHeader s = do
   putStrLn $ "====  " ++ s ++ "  " ++ replicate (60 - 8 - length s) '='
   Term.setSGR [ Term.Reset ]
 
+reportBoldRepo :: String -> IO ()
+reportBoldRepo s = do
+  Term.setSGR [ Term.SetColor Term.Foreground Term.Vivid Term.White
+              , Term.SetConsoleIntensity Term.BoldIntensity
+              ]
+  putStrLn $ "  * " ++ s
+  Term.setSGR [ Term.Reset ]
+
 report :: Bool -> Map String (Report GitErr) -> IO ()
 report verbose (Map.toList -> reps) = forM_ reps $ \case
   -- Empty string correponds to warnings correponding to groups.
@@ -267,16 +275,17 @@ cloneRepo = traverseMissingRepo_ $ \dir nm repo -> do
 -- | Fetch from each remote
 fetchRepo :: RepositoryGroup FilePath -> IO ()
 fetchRepo = traverseExistingRepo_ $ \nm repo -> do
-  putStrLn $ "  * " ++ nm
+  reportBoldRepo nm
   forM_ (HM.toList repo.remote) $ \(r,_url) -> do
     runCommandVerbose "git" ["fetch", T.unpack r]
 
 -- | Attempt to use ff merge
 mergeFF :: RepositoryGroup FilePath -> IO ()
 mergeFF = traverseExistingRepo_ $ \nm repo -> do
-  putStrLn $ "  * " ++ nm
+  reportBoldRepo nm
   gitUncommited >>= \case
-    (_:_) -> pure () -- Skip if there're uncommmited changes
+    (_:_) -> do
+      putStrLn "Skipping: uncommited changes"
     []    -> do
       active_br <- gitCurrentBranch
       forM_ (T.unpack <$> repo.branches) $ \br ->
@@ -294,7 +303,7 @@ pushRepo :: RepositoryGroup FilePath -> IO ()
 pushRepo = traverseExistingRepo_ $ \nm repo -> case repo.can_push of
   []   -> pure ()
   push -> do
-    putStrLn $ "  * " ++ nm
+    reportBoldRepo nm
     forM_ (T.unpack <$> push) $ \br ->
       forM_ (T.unpack <$> HM.keys repo.remote) $ \remote -> do
         let remote_br = remote<>"/"<>br
